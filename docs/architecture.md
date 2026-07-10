@@ -1,7 +1,7 @@
 # Architecture
 
 go-portless routes named services at the connection layer.
-A consumer dials a name (`router.fission:80`); the library resolves that name to a backend and returns a live `net.Conn`.
+A consumer dials a name (`web:80`); the library resolves that name to a backend and returns a live `net.Conn`.
 Because resolution happens at `DialContext`, every TCP-based protocol — HTTP, WebSocket, gRPC, raw TCP — works through the same mechanism.
 
 ## Modules

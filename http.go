@@ -45,8 +45,8 @@ func CloseIdleOnUnhealthy(t *http.Transport) func(Event) {
 	}
 }
 
-// URL builds an http URL for a route: URL("router.fission", 8888, "/fn")
-// → "http://router.fission:8888/fn". Port 0 or 80 is elided.
+// URL builds an http URL for a route: URL("web", 8888, "/fn")
+// → "http://web:8888/fn". Port 0 or 80 is elided.
 func URL(name string, port int, pathAndQuery string) string {
 	return buildURL("http", name, port, 80, pathAndQuery)
 }

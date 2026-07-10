@@ -23,11 +23,11 @@ func Example() {
 	go srv.Serve(l)
 	defer srv.Close()
 
-	reg.Add(context.Background(), "router.fission", b)
+	reg.Add(context.Background(), "web", b)
 
 	client := reg.HTTPClient()
 	defer client.CloseIdleConnections()
-	resp, err := client.Get(portless.URL("router.fission", 0, "/healthz"))
+	resp, err := client.Get(portless.URL("web", 0, "/healthz"))
 	if err != nil {
 		fmt.Println("error:", err)
 		return
@@ -35,5 +35,5 @@ func Example() {
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	fmt.Println(string(body))
-	// Output: hello from router.fission
+	// Output: hello from web
 }

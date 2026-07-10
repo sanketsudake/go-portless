@@ -1,18 +1,57 @@
 # go-portless
 
-Port-free service routing for Go tests and CI.
+Dial services by name in Go tests and CI — with readiness built into the dial.
 
-Instead of hardcoding `127.0.0.1:8888`, racing to find a free port, or babysitting `kubectl port-forward` reconnect loops, register named routes and dial them by name.
-Readiness is built into the dial: dialing a name blocks — bounded by the context and the route's ready timeout — until the backend actually accepts a connection, and backends self-heal across restarts.
+Instead of hardcoding `127.0.0.1:8888`, racing to find a free port, or babysitting `kubectl port-forward` reconnect loops, you register a name and dial it.
+The dial blocks — bounded by the context and a ready timeout — until the backend actually accepts a connection, so a test dials a service that is still starting instead of polling for it.
+Backends self-heal across restarts.
 
-Inspired by [portless.sh](https://portless.sh), but built for test infrastructure rather than human dev servers: zero-root, no `/etc/hosts`, no TLS CA, no daemon required for in-process use.
+Ports drop out of your vocabulary because the backends never surface one: an OS-assigned listener, an in-memory pipe, or a Kubernetes pod.
+You never pick, hardcode, or race for a port number.
 
-## Why
+Inspired by [portless.sh](https://portless.sh), rebuilt for test infrastructure: zero-root, no `/etc/hosts`, no TLS CA, no daemon required for in-process use.
 
-A single mechanism, `Registry.DialContext`, has the same shape as `net.Dialer.DialContext`, so it drops into `http.Transport`, `grpc.WithContextDialer`, and `websocket.Dialer.NetDialContext`.
-Names resolve at the L4 dial layer, so HTTP, WebSockets, gRPC, and raw TCP all work through one path — no more rewriting `http://` into `ws://` by hand.
+## Quickstart
 
-A dial resolves the name, then blocks in the readiness loop until the backend accepts — so a test dials a service that is still starting instead of polling for it:
+**CLI** — run any process on an assigned port and reach it by name, like `portless.sh`:
+
+```sh
+portless run web -- go run ./cmd/server   # binds $PORT, registers "web"
+eval "$(portless env)"                    # export HTTP_PROXY / HTTPS_PROXY / NO_PROXY
+curl http://web/healthz                   # blocks until "web" is serving
+```
+
+`run` never makes you choose a port: it assigns a free one, passes it to the child as `$PORT`, and gives the process a stable name.
+It auto-starts a shared background daemon, so several `run`s share one proxy.
+
+**Library** — three lines against any service:
+
+```go
+reg := portless.New()
+defer reg.Close()
+
+f := backend.Future()            // address supplied once the server is up
+reg.Add(ctx, "web", f)
+
+l, _ := net.Listen("tcp", ":0")  // the OS assigns the port — no FindFreePort, no race
+go serve(l)
+f.SetListener(l)                 // dials to "web" now succeed
+
+resp, err := reg.HTTPClient().Get("http://web/healthz")
+```
+
+The dial to `web` blocks until the backend accepts, so tests need no `Eventually` wrappers just to survive startup races.
+
+## Install
+
+```sh
+go get github.com/sanketsudake/go-portless
+```
+
+The core module depends only on the standard library.
+The Kubernetes port-forward backend lives in a separate module (`github.com/sanketsudake/go-portless/k8s`) so client-go never enters non-k8s builds.
+
+## How a dial resolves
 
 ```mermaid
 flowchart TB
@@ -31,54 +70,34 @@ flowchart TB
     classDef resource fill:#fb7185,stroke:#be123c,color:#fff
 ```
 
-## Install
+`Registry.DialContext` has the same shape as `net.Dialer.DialContext`, so it drops into `http.Transport`, `grpc.WithContextDialer`, and `websocket.Dialer.NetDialContext`.
+Names resolve at the L4 dial layer, so HTTP, WebSockets, gRPC, and raw TCP all work through one path — no rewriting `http://` into `ws://` by hand.
 
-```sh
-go get github.com/sanketsudake/go-portless
-```
+## Backends
 
-The core module depends only on the standard library.
-The Kubernetes port-forward backend lives in a separate module (`github.com/sanketsudake/go-portless/k8s`) so client-go never enters non-k8s builds.
+A backend maps a name to a live connection.
+The port-free backends are the point:
 
-## Library usage
+| Backend | Port | Use for |
+|---------|------|---------|
+| `backend.Future` | OS-assigned, supplied later | a server you start in the test |
+| `backend.Listener` | OS-assigned (`l.Addr()`) | an already-bound `net.Listener` |
+| `backend.Mem` | none (`net.Pipe`) | serve HTTP with zero TCP sockets |
+| `k8s.PortForward` | none (pod stream) | a Kubernetes Service or pod |
+| `backend.TCP` | you supply it | **escape hatch**: name an already-running address |
 
-```go
-reg := portless.New()
-defer reg.Close()
-
-// Register a name against a backend.
-reg.Add(ctx, "router.fission", backend.TCP("127.0.0.1:34917"))
-
-// Dial it by name through any net/http, gRPC, or websocket client.
-client := reg.HTTPClient()
-resp, err := client.Get(portless.URL("router.fission", 0, "/healthz"))
-```
-
-The dial to `router.fission` blocks until the backend is accepting connections, so tests don't need `Eventually` wrappers just to survive startup races.
-
-### Replace find-a-free-port
-
-`backend.Future` removes the "guess a free port, then hope nothing else grabbed it" pattern.
-Bind `:0` yourself, start the component on that listener, then hand the address over:
-
-```go
-f := backend.Future()
-reg.Add(ctx, "router.fission", f)
-
-l, _ := net.Listen("tcp", "127.0.0.1:0") // the OS picks the port
-go startRouter(l)
-f.SetListener(l) // dials to router.fission now succeed
-```
+`backend.TCP("127.0.0.1:9000")` (and the CLI's `portless alias`) is name-aliasing, not port elimination — it points a name at something already listening, like `portless.sh`'s `alias`.
+Reach for it to bridge to a container or external service; reach for the others to actually drop ports.
 
 ### WebSockets and gRPC
 
 ```go
 // WebSocket — no http→ws string surgery.
 d := websocket.Dialer{NetDialContext: reg.DialContext}
-conn, _, err := d.Dial(portless.WSURL("router.fission", 0, "/stream"), nil)
+conn, _, err := d.Dial(portless.WSURL("web", 0, "/stream"), nil)
 
 // gRPC
-cc, err := grpc.NewClient("router.fission:80", grpc.WithContextDialer(reg.DialContext))
+cc, err := grpc.NewClient("web:80", grpc.WithContextDialer(reg.DialContext))
 ```
 
 ### Extensibility
@@ -94,6 +113,7 @@ reg := portless.New(portless.WithMiddleware(
 ```
 
 Route lifecycle and dial events (`EventDialRetry`, `EventBackendUnhealthy`, …) are delivered to handlers registered with `WithEventHandler`.
+See [docs/writing-backends.md](docs/writing-backends.md) for custom backends and middleware.
 
 ## Kubernetes backend
 
@@ -101,35 +121,36 @@ The `k8s` module forwards each dial as its own SPDY stream to a ready pod — no
 Pod restarts self-heal: the next dial re-resolves a ready pod, and the readiness loop absorbs the gap.
 
 ```go
-b, _ := k8s.PortForward(restConfig, k8s.Service("fission", "router"))
-reg.Add(ctx, "router.fission", b)
+b, _ := k8s.PortForward(restConfig, k8s.Service("default", "web"))
+reg.Add(ctx, "web", b)
 ```
 
 ## CLI and the forward proxy
 
-For shell scripts, CI, and non-Go processes, run the daemon and point tools at it via `HTTP_PROXY`:
+For shell scripts, CI, and non-Go processes, the daemon exposes named routes via `HTTP_PROXY`:
 
 ```sh
-portless serve &                                  # forward proxy + control API
-portless route add router.fission --k8s-service fission/router
-portless doctor router.fission                    # wait once until ready
-eval "$(portless env)"                            # export HTTP_PROXY / HTTPS_PROXY / NO_PROXY
-curl http://router.fission/healthz                # reaches the pod through the proxy
+portless run web -- go run ./cmd/server      # run a process on an assigned port
+portless alias db 127.0.0.1:5432             # name an already-running service
+portless route add api --k8s-service prod/api  # forward to a Kubernetes Service
+portless doctor                              # wait once until routes are ready
+eval "$(portless env)"                       # export the proxy for this shell
+curl http://web/healthz
 ```
 
-A request from curl reaches a pod through the same readiness-aware dial the library uses:
+A request from curl reaches the backend through the same readiness-aware dial the library uses:
 
 ```mermaid
 flowchart TB
-    curl["curl (HTTP_PROXY)<br/>router.fission"]:::external
+    curl["curl (HTTP_PROXY)<br/>http://web"]:::external
     proxy["portless proxy<br/>strict registry"]:::process
     ready["Readiness loop<br/>blocks until ready"]:::lease
-    k8s["k8s backend<br/>SPDY stream per dial"]:::process
-    pod["Ready pod"]:::resource
+    backend["Backend<br/>process / pod"]:::process
+    target["Ready endpoint"]:::resource
     curl -->|"<b>1.</b> absolute-form / CONNECT"| proxy
     proxy -->|"<b>2.</b> dial by name"| ready
-    ready -->|"<b>3.</b> resolve + forward"| k8s
-    k8s -->|"<b>4.</b> stream"| pod
+    ready -->|"<b>3.</b> resolve + forward"| backend
+    backend -->|"<b>4.</b> stream"| target
     classDef external fill:#64748b,stroke:#334155,color:#fff
     classDef process fill:#38bdf8,stroke:#0369a1,color:#fff
     classDef lease fill:#f59e0b,stroke:#b45309,color:#fff
@@ -148,6 +169,12 @@ In GitHub Actions, `portless env --shell github >> "$GITHUB_ENV"` exports the pr
 | CLI | `github.com/sanketsudake/go-portless/cmd/portless` | core + k8s |
 
 During development the sub-modules resolve the core via a `replace` directive; these are removed and pinned to a tagged version at release.
+
+## Motivation
+
+go-portless grew out of the [fission](https://github.com/fission/fission) test suite, where the same friction shows up everywhere: `FindFreePort` races, hardcoded `127.0.0.1:8888` addresses that must match a CI port-forward, self-healing `kubectl port-forward` bash loops, and `ws://` URLs hand-rewritten from `http://`.
+None of that is fission-specific — any Go project whose tests reach real services hits it — so the library is general-purpose, with fission as the first consumer.
+See [docs/architecture.md](docs/architecture.md) for the design.
 
 ## License
 
