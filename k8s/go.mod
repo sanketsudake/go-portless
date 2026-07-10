@@ -1,10 +1,12 @@
-module github.com/sanketsudake/go-portless/cmd/portless
+module github.com/sanketsudake/go-portless/k8s
 
 go 1.26.5
 
 require (
 	github.com/sanketsudake/go-portless v0.0.0
-	github.com/sanketsudake/go-portless/k8s v0.0.0
+	k8s.io/api v0.36.2
+	k8s.io/apimachinery v0.36.2
+	k8s.io/client-go v0.36.2
 )
 
 require (
@@ -39,9 +41,6 @@ require (
 	gopkg.in/evanphx/json-patch.v4 v4.13.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	k8s.io/api v0.36.2 // indirect
-	k8s.io/apimachinery v0.36.2 // indirect
-	k8s.io/client-go v0.36.2 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect
 	k8s.io/kube-openapi v0.0.0-20260317180543-43fb72c5454a // indirect
 	k8s.io/streaming v0.36.2 // indirect
@@ -52,6 +51,4 @@ require (
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
 
-replace github.com/sanketsudake/go-portless => ../../
-
-replace github.com/sanketsudake/go-portless/k8s => ../../k8s
+replace github.com/sanketsudake/go-portless => ../

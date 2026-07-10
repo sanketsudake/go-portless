@@ -7,7 +7,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+
+	"github.com/sanketsudake/go-portless/k8s"
 )
+
+func init() {
+	// Make the "k8s" backend type available to the daemon's control API.
+	k8s.Register()
+}
 
 const usage = `portless — port-free service routing for tests and CI
 

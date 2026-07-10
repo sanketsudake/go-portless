@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/sanketsudake/go-portless/control"
@@ -80,6 +81,11 @@ func routeAdd(args []string, stderr io.Writer) error {
 	fs.SetOutput(stderr)
 	socket := fs.String("socket", control.DefaultSocketPath(), "control socket path")
 	tcp := fs.String("tcp", "", "static TCP backend address (HOST:PORT)")
+	k8sService := fs.String("k8s-service", "", "Kubernetes Service as NS/NAME")
+	k8sSelector := fs.String("k8s-selector", "", "Kubernetes pod label selector (requires --k8s-namespace)")
+	k8sNamespace := fs.String("k8s-namespace", "", "namespace for --k8s-selector")
+	targetPort := fs.String("target-port", "", "pod container port (number or name) for k8s backends")
+	kubeconfig := fs.String("kubeconfig", "", "kubeconfig path for k8s backends")
 	if err := fs.Parse(flagArgs); err != nil {
 		return err
 	}
@@ -92,10 +98,39 @@ func routeAdd(args []string, stderr io.Writer) error {
 			return err
 		}
 		spec.Type, spec.Config = "tcp", cfg
+	case *k8sService != "":
+		ns, svc, ok := strings.Cut(*k8sService, "/")
+		if !ok {
+			return errors.New("route add: --k8s-service must be NS/NAME")
+		}
+		cfg, err := json.Marshal(k8sConfig{Namespace: ns, Service: svc, TargetPort: *targetPort, Kubeconfig: *kubeconfig})
+		if err != nil {
+			return err
+		}
+		spec.Type, spec.Config = "k8s", cfg
+	case *k8sSelector != "":
+		if *k8sNamespace == "" {
+			return errors.New("route add: --k8s-selector requires --k8s-namespace")
+		}
+		cfg, err := json.Marshal(k8sConfig{Namespace: *k8sNamespace, Selector: *k8sSelector, TargetPort: *targetPort, Kubeconfig: *kubeconfig})
+		if err != nil {
+			return err
+		}
+		spec.Type, spec.Config = "k8s", cfg
 	default:
-		return errors.New("route add: a backend flag is required (--tcp HOST:PORT)")
+		return errors.New("route add: a backend flag is required (--tcp, --k8s-service, or --k8s-selector)")
 	}
 	return control.NewClient(*socket).AddRoute(context.Background(), spec)
+}
+
+// k8sConfig mirrors k8s.Config for building route specs without importing the
+// k8s package here (the daemon deserializes it).
+type k8sConfig struct {
+	Kubeconfig string `json:"kubeconfig,omitempty"`
+	Namespace  string `json:"namespace"`
+	Service    string `json:"service,omitempty"`
+	Selector   string `json:"selector,omitempty"`
+	TargetPort string `json:"targetPort,omitempty"`
 }
 
 func routeList(args []string, stdout, stderr io.Writer) error {
