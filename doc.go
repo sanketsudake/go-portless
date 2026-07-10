@@ -18,7 +18,7 @@
 //	resp, err := client.Get("http://echo.test/healthz")
 //
 // Backends implement the one-method Backend interface; optional capabilities
-// (Starter, Stopper, HealthChecker) are detected by type assertion. Built-in
+// (Starter, Stopper) are detected by type assertion. Built-in
 // backends live in the backend subpackage; a Kubernetes port-forward backend
 // lives in the separate module github.com/sanketsudake/go-portless/k8s.
 package portless

@@ -21,7 +21,7 @@ func TestRouteWithHealthCheckGatesDial(t *testing.T) {
 
 	r := portless.New()
 	defer r.Close()
-	_, err := r.Add("hc.test", backend.TCP(l.Addr().String()),
+	_, err := r.Add(context.Background(), "hc.test", backend.TCP(l.Addr().String()),
 		portless.RouteWithReadyTimeout(2*time.Second),
 		portless.RouteWithHealthCheck(func(ctx context.Context, dial portless.DialFunc) error {
 			if !healthy.Load() {
@@ -46,7 +46,7 @@ func TestRouteWithHealthCheckTimeoutNamesCause(t *testing.T) {
 	l := echoListener(t)
 	r := portless.New()
 	defer r.Close()
-	_, err := r.Add("hcfail.test", backend.TCP(l.Addr().String()),
+	_, err := r.Add(context.Background(), "hcfail.test", backend.TCP(l.Addr().String()),
 		portless.RouteWithReadyTimeout(150*time.Millisecond),
 		portless.RouteWithHealthCheck(func(ctx context.Context, dial portless.DialFunc) error {
 			return fmt.Errorf("still migrating db")
@@ -77,7 +77,7 @@ func TestRouteWithHTTPHealth(t *testing.T) {
 
 	r := portless.New()
 	defer r.Close()
-	_, err := r.Add("web.test", backend.TCP(addr),
+	_, err := r.Add(context.Background(), "web.test", backend.TCP(addr),
 		portless.RouteWithReadyTimeout(3*time.Second),
 		portless.RouteWithHTTPHealth(portNum, "/healthz"))
 	if err != nil {

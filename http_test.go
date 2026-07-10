@@ -1,6 +1,7 @@
 package portless_test
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/http"
@@ -43,7 +44,7 @@ func TestHTTPClientAndTransport(t *testing.T) {
 
 	r := portless.New()
 	defer r.Close()
-	if _, err := r.Add("sugar.test", backend.Listener(l)); err != nil {
+	if _, err := r.Add(context.Background(), "sugar.test", backend.Listener(l)); err != nil {
 		t.Fatal(err)
 	}
 

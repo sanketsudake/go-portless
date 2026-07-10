@@ -51,7 +51,7 @@ func TestListenerBackend(t *testing.T) {
 
 	r := portless.New()
 	defer r.Close()
-	if _, err := r.Add("lst.test", backend.Listener(l)); err != nil {
+	if _, err := r.Add(context.Background(), "lst.test", backend.Listener(l)); err != nil {
 		t.Fatal(err)
 	}
 	get(t, r, "http://lst.test/", "from-listener")
@@ -63,7 +63,7 @@ func TestMemBackendZeroTCP(t *testing.T) {
 
 	r := portless.New()
 	defer r.Close()
-	if _, err := r.Add("mem.test", b); err != nil {
+	if _, err := r.Add(context.Background(), "mem.test", b); err != nil {
 		t.Fatal(err)
 	}
 	get(t, r, "http://mem.test/", "from-mem")
@@ -82,7 +82,7 @@ func TestFutureBackendBlocksUntilSetListener(t *testing.T) {
 	f := backend.Future()
 	r := portless.New()
 	defer r.Close()
-	if _, err := r.Add("fut.test", f); err != nil {
+	if _, err := r.Add(context.Background(), "fut.test", f); err != nil {
 		t.Fatal(err)
 	}
 
@@ -116,7 +116,7 @@ func TestFutureBackendSetAddr(t *testing.T) {
 	f.Set(l.Addr().String())
 	r := portless.New()
 	defer r.Close()
-	if _, err := r.Add("fa.test", f); err != nil {
+	if _, err := r.Add(context.Background(), "fa.test", f); err != nil {
 		t.Fatal(err)
 	}
 	get(t, r, "http://fa.test/", "hi")

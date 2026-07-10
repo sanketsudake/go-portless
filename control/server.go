@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -85,12 +86,13 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListRoutes(w http.ResponseWriter, r *http.Request) {
+	routes := s.reg.Routes()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := make([]RouteInfo, 0, len(s.reg.Routes()))
-	for _, rt := range s.reg.Routes() {
+	out := make([]RouteInfo, 0, len(routes))
+	for _, rt := range routes {
 		info := RouteInfo{Name: rt.Name(), Type: "custom"}
-		if spec, ok := s.specs[rt.Name()]; ok {
+		if spec, ok := s.specs[strings.ToLower(rt.Name())]; ok {
 			info.Type, info.Config = spec.Type, spec.Config
 		}
 		out = append(out, info)
@@ -101,34 +103,33 @@ func (s *Server) handleListRoutes(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAddRoute(w http.ResponseWriter, r *http.Request) {
 	var spec RouteSpec
 	if err := json.NewDecoder(r.Body).Decode(&spec); err != nil {
-		httpError(w, http.StatusBadRequest, fmt.Errorf("decode spec: %w", err))
+		httpError(w, http.StatusBadRequest, codeBadRequest, fmt.Errorf("decode spec: %w", err))
 		return
 	}
 	if spec.Name == "" || spec.Type == "" {
-		httpError(w, http.StatusBadRequest, errors.New("spec requires name and type"))
+		httpError(w, http.StatusBadRequest, codeBadRequest, errors.New("spec requires name and type"))
 		return
 	}
 	factory, ok := lookupFactory(spec.Type)
 	if !ok {
-		httpError(w, http.StatusBadRequest, fmt.Errorf("unknown backend type %q", spec.Type))
+		httpError(w, http.StatusBadRequest, codeBadRequest, fmt.Errorf("unknown backend type %q", spec.Type))
 		return
 	}
 	b, err := factory(spec.Config)
 	if err != nil {
-		httpError(w, http.StatusBadRequest, err)
+		httpError(w, http.StatusBadRequest, codeBadRequest, err)
 		return
 	}
-	if _, err := s.reg.Add(spec.Name, b); err != nil {
-		switch {
-		case errors.Is(err, portless.ErrRouteExists):
-			httpError(w, http.StatusConflict, err)
-		default:
-			httpError(w, http.StatusInternalServerError, err)
+	if _, err := s.reg.Add(r.Context(), spec.Name, b); err != nil {
+		if errors.Is(err, portless.ErrRouteExists) {
+			httpError(w, http.StatusConflict, codeRouteExists, err)
+		} else {
+			httpError(w, http.StatusInternalServerError, codeInternal, err)
 		}
 		return
 	}
 	s.mu.Lock()
-	s.specs[spec.Name] = spec
+	s.specs[strings.ToLower(spec.Name)] = spec
 	s.mu.Unlock()
 	w.WriteHeader(http.StatusCreated)
 }
@@ -137,14 +138,14 @@ func (s *Server) handleRemoveRoute(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if err := s.reg.Remove(r.Context(), name); err != nil {
 		if errors.Is(err, portless.ErrRouteNotFound) {
-			httpError(w, http.StatusNotFound, err)
+			httpError(w, http.StatusNotFound, codeRouteNotFound, err)
 		} else {
-			httpError(w, http.StatusInternalServerError, err)
+			httpError(w, http.StatusInternalServerError, codeInternal, err)
 		}
 		return
 	}
 	s.mu.Lock()
-	delete(s.specs, name)
+	delete(s.specs, strings.ToLower(name))
 	s.mu.Unlock()
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -153,14 +154,14 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	rt, ok := s.reg.Lookup(name)
 	if !ok {
-		httpError(w, http.StatusNotFound, fmt.Errorf("route %q: %w", name, portless.ErrRouteNotFound))
+		httpError(w, http.StatusNotFound, codeRouteNotFound, fmt.Errorf("route %q: %w", name, portless.ErrRouteNotFound))
 		return
 	}
 	ctx := r.Context()
 	if t := r.URL.Query().Get("timeout"); t != "" {
 		d, err := time.ParseDuration(t)
 		if err != nil {
-			httpError(w, http.StatusBadRequest, fmt.Errorf("bad timeout: %w", err))
+			httpError(w, http.StatusBadRequest, codeBadRequest, fmt.Errorf("bad timeout: %w", err))
 			return
 		}
 		var cancel func()
@@ -168,7 +169,13 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 	}
 	if err := rt.Ready(ctx); err != nil {
-		httpError(w, http.StatusGatewayTimeout, err)
+		// A deadline reached means "still not ready"; anything else (registry
+		// closed, terminal backend/config error) is not a timeout.
+		if errors.Is(err, context.DeadlineExceeded) {
+			httpError(w, http.StatusGatewayTimeout, codeNotReady, err)
+		} else {
+			httpError(w, http.StatusBadGateway, codeNotReady, err)
+		}
 		return
 	}
 	w.WriteHeader(http.StatusOK)
@@ -180,6 +187,16 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	json.NewEncoder(w).Encode(v) //nolint:errcheck
 }
 
-func httpError(w http.ResponseWriter, code int, err error) {
-	writeJSON(w, code, map[string]string{"error": err.Error()})
+// Machine-readable error codes carried in error responses, so the client can
+// map failures back to sentinel errors without matching on message text.
+const (
+	codeRouteExists   = "route_exists"
+	codeRouteNotFound = "route_not_found"
+	codeNotReady      = "not_ready"
+	codeBadRequest    = "bad_request"
+	codeInternal      = "internal"
+)
+
+func httpError(w http.ResponseWriter, status int, code string, err error) {
+	writeJSON(w, status, map[string]string{"error": err.Error(), "code": code})
 }

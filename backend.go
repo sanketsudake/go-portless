@@ -28,12 +28,6 @@ type Stopper interface {
 	Stop(ctx context.Context) error
 }
 
-// HealthChecker is an optional Backend capability: liveness beyond
-// "accepts TCP". Used by Route.Ready and status/doctor tooling.
-type HealthChecker interface {
-	Healthy(ctx context.Context) error
-}
-
 // ContextDialer is the consumer-facing dial abstraction. *Registry implements
 // it; the proxy, HTTP sugar, and third-party integrations depend on this
 // interface rather than on *Registry.

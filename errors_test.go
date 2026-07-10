@@ -7,7 +7,6 @@ import (
 	"net"
 	"syscall"
 	"testing"
-	"time"
 
 	portless "github.com/sanketsudake/go-portless"
 )
@@ -65,5 +64,4 @@ func TestIsRetryableClassification(t *testing.T) {
 	if portless.IsRetryable(context.DeadlineExceeded) {
 		t.Fatal("context.DeadlineExceeded from the caller's ctx must not be retryable")
 	}
-	_ = time.Second
 }

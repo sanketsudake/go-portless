@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -129,7 +130,7 @@ func TestWaitReady(t *testing.T) {
 	reg, c := startServer(t)
 
 	f := backend.Future()
-	if _, err := reg.Add("boot.test", f); err != nil {
+	if _, err := reg.Add(context.Background(), "boot.test", f); err != nil {
 		t.Fatal(err)
 	}
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -164,6 +165,46 @@ func acceptAndClose(l net.Listener) {
 			return
 		}
 		c.Close()
+	}
+}
+
+func TestReadyBeyondRouteTimeout(t *testing.T) {
+	// Registry ready timeout is short; the /ready caller asks for longer and
+	// the backend comes up in between. The explicit request timeout must win.
+	reg := portless.New(portless.WithReadyTimeout(100 * time.Millisecond))
+	t.Cleanup(func() { reg.Close() })
+	dir, err := os.MkdirTemp("", "pl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "p.sock")
+	srv := control.NewServer(reg)
+	l, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go srv.Serve(l) //nolint:errcheck
+	t.Cleanup(func() { srv.Close() })
+	c := control.NewClient(sock)
+
+	f := backend.Future()
+	if _, err := reg.Add(context.Background(), "late.test", f); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go acceptAndClose(ln)
+	go func() {
+		time.Sleep(300 * time.Millisecond) // past the 100ms route ready timeout
+		f.SetListener(ln)
+	}()
+
+	if err := c.WaitReady(context.Background(), "late.test", 3*time.Second); err != nil {
+		t.Fatalf("WaitReady with a 3s timeout should outlast the 100ms route timeout: %v", err)
 	}
 }
 

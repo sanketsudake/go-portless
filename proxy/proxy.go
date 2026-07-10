@@ -5,6 +5,11 @@
 // Because readiness lives in the dial, a curl through this proxy blocks
 // until the backend is up instead of needing retry loops.
 //
+// Security: the proxy reaches whatever its dialer reaches. Front it with a
+// strict Registry (portless.WithStrict) so only registered routes are
+// reachable; a non-strict Registry falls back to real network dials, turning
+// the proxy into an open forward proxy (an SSRF pivot for any local process).
+//
 // Note: CONNECT tunnels are passthrough — TLS clients see the backend's own
 // certificate, which won't match the route name unless the backend serves
 // one for it. Use plain HTTP or --insecure for test backends.
@@ -35,11 +40,10 @@ type Proxy struct {
 	dialer    portless.ContextDialer
 	logger    *slog.Logger
 	transport *http.Transport
+	server    *http.Server // built in New; Close is always able to reach it
 
-	mu       sync.Mutex
-	server   *http.Server
-	listener net.Listener
-	addr     string
+	closeOnce sync.Once
+	done      chan struct{} // closed by Close; stops the Start watcher goroutine
 }
 
 // New creates a Proxy that routes through d.
@@ -48,15 +52,15 @@ func New(d portless.ContextDialer, opts ...Option) *Proxy {
 		dialer: d,
 		logger: slog.Default(),
 		transport: &http.Transport{
-			DialContext:       d.DialContext,
-			DisableKeepAlives: false,
-			// The proxy must not recurse through another proxy.
-			Proxy: nil,
+			DialContext: d.DialContext,
+			Proxy:       nil, // the proxy must not recurse through another proxy
 		},
+		done: make(chan struct{}),
 	}
 	for _, o := range opts {
 		o(p)
 	}
+	p.server = &http.Server{Handler: p}
 	return p
 }
 
@@ -69,46 +73,34 @@ func (p *Proxy) Start(ctx context.Context, listenAddr string) (string, error) {
 		return "", fmt.Errorf("proxy: listen %s: %w", listenAddr, err)
 	}
 	go func() {
-		<-ctx.Done()
-		p.Close()
+		select {
+		case <-ctx.Done():
+			p.Close()
+		case <-p.done:
+		}
 	}()
-	go p.Serve(l) //nolint:errcheck // Serve returns ErrServerClosed on Close
+	go p.Serve(l) //nolint:errcheck // Serve returns nil on Close
 	return l.Addr().String(), nil
 }
 
 // Serve serves proxy traffic on l, blocking until Close.
 func (p *Proxy) Serve(l net.Listener) error {
-	srv := &http.Server{Handler: p}
-	p.mu.Lock()
-	p.server = srv
-	p.listener = l
-	p.addr = l.Addr().String()
-	p.mu.Unlock()
-	err := srv.Serve(l)
+	err := p.server.Serve(l)
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}
 	return err
 }
 
-// Addr returns the bound address, or "" before Serve/Start.
-func (p *Proxy) Addr() string {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.addr
-}
-
-// Close stops the proxy listener and idle connections. Hijacked CONNECT
-// tunnels close with their client connections.
+// Close stops the proxy listener and idle connections. Idempotent.
 func (p *Proxy) Close() error {
-	p.mu.Lock()
-	srv := p.server
-	p.mu.Unlock()
-	p.transport.CloseIdleConnections()
-	if srv == nil {
-		return nil
-	}
-	return srv.Close()
+	var err error
+	p.closeOnce.Do(func() {
+		close(p.done)
+		p.transport.CloseIdleConnections()
+		err = p.server.Close()
+	})
+	return err
 }
 
 // ServeHTTP dispatches CONNECT tunnels and absolute-form requests.

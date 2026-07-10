@@ -3,6 +3,7 @@ package proxy
 import (
 	"io"
 	"net/http"
+	"strings"
 )
 
 // hopByHop headers are consumed by each proxy hop and must not be forwarded.
@@ -38,8 +39,14 @@ func (p *Proxy) handleAbsolute(w http.ResponseWriter, r *http.Request) {
 }
 
 func stripHopByHop(h http.Header) {
-	for _, f := range h.Values("Connection") {
-		h.Del(f)
+	// A Connection header nominates hop-by-hop headers as comma-separated
+	// tokens, which may share one header line ("Connection: close, X-Foo").
+	for _, line := range h.Values("Connection") {
+		for tok := range strings.SplitSeq(line, ",") {
+			if tok = strings.TrimSpace(tok); tok != "" {
+				h.Del(tok)
+			}
+		}
 	}
 	for _, f := range hopByHop {
 		h.Del(f)

@@ -24,7 +24,7 @@ func TestConcurrentAddRemoveDialClose(t *testing.T) {
 			defer wg.Done()
 			name := fmt.Sprintf("svc%d.test", i)
 			for range 50 {
-				r.Add(name, backend.TCP(l.Addr().String()))
+				r.Add(context.Background(), name, backend.TCP(l.Addr().String()))
 				ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 				if conn, err := r.DialContext(ctx, "tcp", name+":80"); err == nil {
 					conn.Close()

@@ -141,7 +141,7 @@ func TestDoctor(t *testing.T) {
 			c.Close()
 		}
 	}()
-	if _, err := reg.Add("up.test", backend.TCP(l.Addr().String())); err != nil {
+	if _, err := reg.Add(context.Background(), "up.test", backend.TCP(l.Addr().String())); err != nil {
 		t.Fatal(err)
 	}
 

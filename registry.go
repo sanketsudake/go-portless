@@ -48,8 +48,9 @@ func New(opts ...Option) *Registry {
 }
 
 // Add registers name with backend b. If b implements Starter, Start is called
-// before the route becomes dialable; a Start error fails the Add.
-func (r *Registry) Add(name string, b Backend, opts ...RouteOption) (*Route, error) {
+// (with ctx) before the route becomes dialable; a Start error fails the Add.
+// ctx bounds only the Start call.
+func (r *Registry) Add(ctx context.Context, name string, b Backend, opts ...RouteOption) (*Route, error) {
 	if name == "" {
 		return nil, errors.New("portless: route name must not be empty")
 	}
@@ -65,15 +66,6 @@ func (r *Registry) Add(name string, b Backend, opts ...RouteOption) (*Route, err
 	rt := &Route{name: name, backend: b, cfg: rcfg, registry: r}
 	rt.buildDial(r.cfg.middleware)
 
-	if es, ok := b.(EventSinkSetter); ok {
-		es.SetEventSink(func(e Event) {
-			if e.Route == "" {
-				e.Route = name
-			}
-			r.emit(e)
-		})
-	}
-
 	r.mu.Lock()
 	if r.closed {
 		r.mu.Unlock()
@@ -88,8 +80,19 @@ func (r *Registry) Add(name string, b Backend, opts ...RouteOption) (*Route, err
 	r.routes[key] = nil
 	r.mu.Unlock()
 
+	// Wire the event sink only after the name is reserved, so a rejected Add
+	// never leaves the backend emitting into this registry.
+	if es, ok := b.(EventSinkSetter); ok {
+		es.SetEventSink(func(e Event) {
+			if e.Route == "" {
+				e.Route = name
+			}
+			r.emit(e)
+		})
+	}
+
 	if s, ok := b.(Starter); ok {
-		if err := s.Start(context.Background()); err != nil {
+		if err := s.Start(ctx); err != nil {
 			r.mu.Lock()
 			delete(r.routes, key)
 			r.mu.Unlock()
@@ -183,10 +186,7 @@ func (r *Registry) Close() error {
 // cancellation, or the route's ready timeout. Unknown hosts use the fallback
 // dialer, or fail with ErrRouteNotFound in strict mode.
 func (r *Registry) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	host, _, err := net.SplitHostPort(address)
-	if err != nil {
-		host = address // bare host without port
-	}
+	host := hostOf(address)
 
 	r.mu.RLock()
 	closed := r.closed
@@ -208,9 +208,15 @@ func (r *Registry) DialContext(ctx context.Context, network, address string) (ne
 // failing health checks) with backoff until success, terminal error, ctx
 // expiry, ready timeout, or Close.
 func (r *Registry) dialRoute(ctx context.Context, rt *Route, network, address string) (net.Conn, error) {
-	ctx, cancel := context.WithTimeoutCause(ctx, rt.cfg.readyTimeout,
-		fmt.Errorf("portless: route %q not ready within %v", rt.name, rt.cfg.readyTimeout))
-	defer cancel()
+	// The route's ready timeout is a safety cap for callers that pass an
+	// unbounded context. An explicit caller deadline (a test's context, or
+	// the control /ready?timeout= parameter) is authoritative and wins.
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel func()
+		ctx, cancel = context.WithTimeoutCause(ctx, rt.cfg.readyTimeout,
+			fmt.Errorf("portless: route %q not ready within %v", rt.name, rt.cfg.readyTimeout))
+		defer cancel()
+	}
 
 	start := time.Now()
 	r.emit(Event{Type: EventDialStart, Route: rt.name, Address: address})
@@ -225,8 +231,12 @@ func (r *Registry) dialRoute(ctx context.Context, rt *Route, network, address st
 	for attempt := 0; ; attempt++ {
 		conn, err := rt.dial(ctx, network, address)
 		if err == nil && rt.cfg.health != nil {
-			if herr := rt.cfg.health(ctx, rt.dial); herr != nil {
+			// Health checks dial the backend directly (no port map or
+			// middleware) so a probe port never collides with the port map.
+			if herr := rt.cfg.health(ctx, rt.backend.DialContext); herr != nil {
 				conn.Close()
+				// A failing health check means "not ready yet": retry until
+				// the route is healthy or the ready timeout elapses.
 				conn, err = nil, Retryable(fmt.Errorf("health check: %w", herr))
 			}
 		}
@@ -234,13 +244,13 @@ func (r *Registry) dialRoute(ctx context.Context, rt *Route, network, address st
 			r.emit(Event{Type: EventDialSuccess, Route: rt.name, Address: address, Elapsed: time.Since(start)})
 			return conn, nil
 		}
+		lastErr = err
 		if ctxErr := context.Cause(ctx); ctxErr != nil {
 			return fail(dialWaitError(rt.name, ctx, lastErr))
 		}
 		if !IsRetryable(err) {
 			return fail(fmt.Errorf("portless: dial route %q: %w", rt.name, err))
 		}
-		lastErr = err
 		r.emit(Event{Type: EventDialRetry, Route: rt.name, Address: address, Attempt: attempt + 1, Err: err})
 		r.cfg.logger.Debug("portless: backend not ready, retrying",
 			"route", rt.name, "address", address, "err", err)

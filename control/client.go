@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	portless "github.com/sanketsudake/go-portless"
@@ -56,8 +55,12 @@ func (c *Client) RemoveRoute(ctx context.Context, name string) error {
 }
 
 // WaitReady blocks until the named route's backend accepts a connection, up
-// to timeout. It is the CI wait primitive behind `portless doctor`.
+// to timeout. It is the CI wait primitive behind `portless doctor`. The
+// request context is bounded client-side (timeout plus a grace margin) so a
+// wedged daemon cannot block the caller past the promised timeout.
 func (c *Client) WaitReady(ctx context.Context, name string, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout+5*time.Second)
+	defer cancel()
 	p := fmt.Sprintf("/v1/routes/%s/ready?timeout=%s", url.PathEscape(name), url.QueryEscape(timeout.String()))
 	return c.do(ctx, http.MethodGet, p, nil, nil)
 }
@@ -90,12 +93,13 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 	if resp.StatusCode >= 400 {
 		var e struct {
 			Error string `json:"error"`
+			Code  string `json:"code"`
 		}
 		msg := resp.Status
 		if json.NewDecoder(resp.Body).Decode(&e) == nil && e.Error != "" {
 			msg = e.Error
 		}
-		return fmt.Errorf("control: %s %s: %s: %w", method, path, msg, sentinelFor(resp.StatusCode, msg))
+		return fmt.Errorf("control: %s %s: %s: %w", method, path, msg, sentinelFor(e.Code, resp.StatusCode))
 	}
 	if out != nil {
 		return json.NewDecoder(resp.Body).Decode(out)
@@ -104,15 +108,15 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 	return nil
 }
 
-// sentinelFor maps API status codes back to portless sentinel errors so
-// callers can errors.Is across the wire.
-func sentinelFor(code int, msg string) error {
-	switch {
-	case code == http.StatusConflict:
+// sentinelFor maps the API's machine-readable error code back to a portless
+// sentinel error so callers can errors.Is across the wire.
+func sentinelFor(code string, status int) error {
+	switch code {
+	case "route_exists":
 		return portless.ErrRouteExists
-	case code == http.StatusNotFound && strings.Contains(msg, "route"):
+	case "route_not_found":
 		return portless.ErrRouteNotFound
 	default:
-		return fmt.Errorf("http status %d", code)
+		return fmt.Errorf("http status %d", status)
 	}
 }

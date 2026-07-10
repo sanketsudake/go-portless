@@ -6,8 +6,11 @@ import "time"
 type EventType int
 
 const (
+	// EventInvalid is the zero value, reserved so an accidentally zero-valued
+	// Event is not mistaken for a real event type.
+	EventInvalid EventType = iota
 	// EventRouteAdded fires after a route is registered and its backend started.
-	EventRouteAdded EventType = iota
+	EventRouteAdded
 	// EventRouteRemoved fires after a route is removed.
 	EventRouteRemoved
 	// EventDialStart fires when a dial enters a route's readiness loop.
@@ -28,6 +31,8 @@ const (
 // String returns the event type name.
 func (t EventType) String() string {
 	switch t {
+	case EventInvalid:
+		return "invalid"
 	case EventRouteAdded:
 		return "route_added"
 	case EventRouteRemoved:
@@ -67,8 +72,7 @@ type EventSinkSetter interface {
 	SetEventSink(func(Event))
 }
 
-// emit fans an event out to all registered handlers, stamping Time and the
-// route name if unset.
+// emit fans an event out to all registered handlers, stamping Time if unset.
 func (r *Registry) emit(e Event) {
 	if len(r.cfg.handlers) == 0 {
 		return

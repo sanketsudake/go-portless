@@ -22,7 +22,9 @@ func DefaultSocketPath() string {
 			return filepath.Join(d, "portless", "portless.sock")
 		}
 	}
-	return filepath.Join(os.TempDir(), fmt.Sprintf("portless-%d.sock", os.Getuid()))
+	// A per-user subdirectory (created 0700 by EnsureSocketDir) rather than
+	// the socket sitting directly in world-writable /tmp.
+	return filepath.Join(os.TempDir(), fmt.Sprintf("portless-%d", os.Getuid()), "portless.sock")
 }
 
 // EnsureSocketDir creates the socket's parent directory with 0700 and removes

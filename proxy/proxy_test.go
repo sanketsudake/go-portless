@@ -55,7 +55,7 @@ func TestAbsoluteFormHTTP(t *testing.T) {
 		fmt.Fprintf(w, "host=%s path=%s", r.Host, r.URL.Path)
 	}))
 	defer srv.Close()
-	if _, err := reg.Add("web.test", backend.TCP(srv.Listener.Addr().String())); err != nil {
+	if _, err := reg.Add(context.Background(), "web.test", backend.TCP(srv.Listener.Addr().String())); err != nil {
 		t.Fatal(err)
 	}
 
@@ -77,7 +77,7 @@ func TestConnectTunnelTLS(t *testing.T) {
 		fmt.Fprint(w, "secure")
 	}))
 	defer srv.Close()
-	if _, err := reg.Add("secure.test", backend.TCP(srv.Listener.Addr().String())); err != nil {
+	if _, err := reg.Add(context.Background(), "secure.test", backend.TCP(srv.Listener.Addr().String())); err != nil {
 		t.Fatal(err)
 	}
 
@@ -150,7 +150,7 @@ func TestCurlStyleReadinessBlocking(t *testing.T) {
 	reg, client, _ := startProxy(t)
 
 	f := backend.Future()
-	if _, err := reg.Add("slowstart.test", f); err != nil {
+	if _, err := reg.Add(context.Background(), "slowstart.test", f); err != nil {
 		t.Fatal(err)
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

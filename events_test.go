@@ -44,7 +44,7 @@ func TestEventsLifecycleAndDial(t *testing.T) {
 	r := portless.New(portless.WithEventHandler(er.handle))
 	defer r.Close()
 
-	if _, err := r.Add("ev.test", backend.TCP(l.Addr().String())); err != nil {
+	if _, err := r.Add(context.Background(), "ev.test", backend.TCP(l.Addr().String())); err != nil {
 		t.Fatal(err)
 	}
 	roundTrip(t, r, "ev.test:80")
@@ -78,7 +78,7 @@ func TestEventsRetryAndError(t *testing.T) {
 	defer r.Close()
 
 	b := &notReadyBackend{} // never ready
-	if _, err := r.Add("evr.test", b, portless.RouteWithReadyTimeout(150*time.Millisecond)); err != nil {
+	if _, err := r.Add(context.Background(), "evr.test", b, portless.RouteWithReadyTimeout(150*time.Millisecond)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r.DialContext(context.Background(), "tcp", "evr.test:80"); err == nil {
@@ -106,7 +106,7 @@ func TestMultipleEventHandlersFanOut(t *testing.T) {
 	er1, er2 := &eventRecorder{}, &eventRecorder{}
 	r := portless.New(portless.WithEventHandler(er1.handle), portless.WithEventHandler(er2.handle))
 	defer r.Close()
-	if _, err := r.Add("fan.test", backend.TCP("127.0.0.1:1")); err != nil {
+	if _, err := r.Add(context.Background(), "fan.test", backend.TCP("127.0.0.1:1")); err != nil {
 		t.Fatal(err)
 	}
 	if !er1.has(portless.EventRouteAdded) || !er2.has(portless.EventRouteAdded) {
@@ -130,7 +130,7 @@ func TestBackendEventSinkWired(t *testing.T) {
 	b := &sinkBackend{backendFunc: func(ctx context.Context, network, address string) (net.Conn, error) {
 		return nil, errors.New("unused")
 	}}
-	if _, err := r.Add("sink.test", b); err != nil {
+	if _, err := r.Add(context.Background(), "sink.test", b); err != nil {
 		t.Fatal(err)
 	}
 	if b.sink == nil {

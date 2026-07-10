@@ -63,7 +63,7 @@ func TestAddLookupRemove(t *testing.T) {
 	r := portless.New()
 	defer r.Close()
 
-	rt, err := r.Add("router.fission", backend.TCP("127.0.0.1:1"))
+	rt, err := r.Add(context.Background(), "router.fission", backend.TCP("127.0.0.1:1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,10 +80,10 @@ func TestAddLookupRemove(t *testing.T) {
 		t.Fatalf("Routes() len = %d", got)
 	}
 
-	if _, err := r.Add("router.fission", backend.TCP("127.0.0.1:1")); !errors.Is(err, portless.ErrRouteExists) {
+	if _, err := r.Add(context.Background(), "router.fission", backend.TCP("127.0.0.1:1")); !errors.Is(err, portless.ErrRouteExists) {
 		t.Fatalf("duplicate Add err = %v, want ErrRouteExists", err)
 	}
-	if _, err := r.Add("", backend.TCP("127.0.0.1:1")); err == nil {
+	if _, err := r.Add(context.Background(), "", backend.TCP("127.0.0.1:1")); err == nil {
 		t.Fatal("empty name should be rejected")
 	}
 
@@ -102,7 +102,7 @@ func TestDialRegisteredName(t *testing.T) {
 	l := echoListener(t)
 	r := portless.New()
 	defer r.Close()
-	if _, err := r.Add("echo.test", backend.TCP(l.Addr().String())); err != nil {
+	if _, err := r.Add(context.Background(), "echo.test", backend.TCP(l.Addr().String())); err != nil {
 		t.Fatal(err)
 	}
 	roundTrip(t, r, "echo.test:80")
@@ -131,7 +131,7 @@ func TestDialClosedRegistry(t *testing.T) {
 	if _, err := r.DialContext(context.Background(), "tcp", "x.test:80"); !errors.Is(err, portless.ErrClosed) {
 		t.Fatalf("err = %v, want ErrClosed", err)
 	}
-	if _, err := r.Add("x.test", backend.TCP("127.0.0.1:1")); !errors.Is(err, portless.ErrClosed) {
+	if _, err := r.Add(context.Background(), "x.test", backend.TCP("127.0.0.1:1")); !errors.Is(err, portless.ErrClosed) {
 		t.Fatalf("Add err = %v, want ErrClosed", err)
 	}
 }
@@ -164,7 +164,7 @@ func TestDialBlocksUntilReady(t *testing.T) {
 	b := &notReadyBackend{}
 	r := portless.New()
 	defer r.Close()
-	if _, err := r.Add("slow.test", b); err != nil {
+	if _, err := r.Add(context.Background(), "slow.test", b); err != nil {
 		t.Fatal(err)
 	}
 
@@ -190,7 +190,7 @@ func TestDialReadyTimeout(t *testing.T) {
 	b := &notReadyBackend{} // never becomes ready
 	r := portless.New()
 	defer r.Close()
-	if _, err := r.Add("never.test", b, portless.RouteWithReadyTimeout(120*time.Millisecond)); err != nil {
+	if _, err := r.Add(context.Background(), "never.test", b, portless.RouteWithReadyTimeout(120*time.Millisecond)); err != nil {
 		t.Fatal(err)
 	}
 	start := time.Now()
@@ -210,7 +210,7 @@ func TestDialCtxCancel(t *testing.T) {
 	b := &notReadyBackend{}
 	r := portless.New()
 	defer r.Close()
-	if _, err := r.Add("never.test", b); err != nil {
+	if _, err := r.Add(context.Background(), "never.test", b); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -225,7 +225,7 @@ func TestDialNonRetryableErrorFailsFast(t *testing.T) {
 	fatal := errors.New("bad config")
 	r := portless.New()
 	defer r.Close()
-	if _, err := r.Add("bad.test", backendFunc(func(ctx context.Context, network, address string) (net.Conn, error) {
+	if _, err := r.Add(context.Background(), "bad.test", backendFunc(func(ctx context.Context, network, address string) (net.Conn, error) {
 		return nil, fatal
 	})); err != nil {
 		t.Fatal(err)
@@ -268,7 +268,7 @@ func TestBackendLifecycle(t *testing.T) {
 		return nil, errors.New("unused")
 	}}
 	r := portless.New()
-	if _, err := r.Add("lc.test", b); err != nil {
+	if _, err := r.Add(context.Background(), "lc.test", b); err != nil {
 		t.Fatal(err)
 	}
 	b.mu.Lock()
@@ -288,7 +288,7 @@ func TestBackendLifecycle(t *testing.T) {
 
 	// Close stops remaining backends exactly once.
 	b2 := &lifecycleBackend{backendFunc: b.backendFunc}
-	if _, err := r.Add("lc2.test", b2); err != nil {
+	if _, err := r.Add(context.Background(), "lc2.test", b2); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.Close(); err != nil {
@@ -308,7 +308,7 @@ func TestRouteReady(t *testing.T) {
 	l := echoListener(t)
 	r := portless.New()
 	defer r.Close()
-	rt, err := r.Add("ready.test", backend.TCP(l.Addr().String()))
+	rt, err := r.Add(context.Background(), "ready.test", backend.TCP(l.Addr().String()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -329,7 +329,7 @@ func TestSelfHealAfterListenerRestart(t *testing.T) {
 
 	r := portless.New()
 	defer r.Close()
-	if _, err := r.Add("heal.test", backend.TCP(addr)); err != nil {
+	if _, err := r.Add(context.Background(), "heal.test", backend.TCP(addr)); err != nil {
 		t.Fatal(err)
 	}
 	roundTrip(t, r, "heal.test:80")

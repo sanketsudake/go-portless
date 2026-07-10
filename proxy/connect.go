@@ -7,6 +7,8 @@ import (
 	"sync"
 )
 
+type closeWriter interface{ CloseWrite() error }
+
 // handleConnect dials the target through the registry (blocking until the
 // backend is ready), then tunnels bytes both ways with TCP half-close.
 func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
@@ -41,21 +43,28 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var once sync.Once
+	closeBoth := func() { once.Do(func() { clientConn.Close(); backendConn.Close() }) }
+
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go tunnel(&wg, backendConn, clientConn)
-	go tunnel(&wg, clientConn, backendConn)
+	go tunnel(&wg, backendConn, clientConn, closeBoth)
+	go tunnel(&wg, clientConn, backendConn, closeBoth)
 	wg.Wait()
 }
 
-// tunnel copies src→dst, then half-closes dst's write side so the peer sees
-// EOF while the opposite direction can still drain.
-func tunnel(wg *sync.WaitGroup, dst, src net.Conn) {
+// tunnel copies src→dst. On EOF it half-closes dst's write side so the peer
+// sees EOF while the opposite direction can still drain. Conns that do not
+// support CloseWrite (e.g. an in-memory backend, or a ConnWrapper that does
+// not embed net.Conn) cannot half-close, so the whole tunnel is torn down
+// symmetrically instead — preserve CloseWrite through wrappers to keep true
+// half-close.
+func tunnel(wg *sync.WaitGroup, dst, src net.Conn, closeBoth func()) {
 	defer wg.Done()
 	io.Copy(dst, src) //nolint:errcheck // best-effort tunnel; errors end the copy
-	if cw, ok := dst.(interface{ CloseWrite() error }); ok {
+	if cw, ok := dst.(closeWriter); ok {
 		cw.CloseWrite() //nolint:errcheck
-	} else {
-		dst.Close()
+		return
 	}
+	closeBoth()
 }

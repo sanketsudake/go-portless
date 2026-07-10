@@ -53,7 +53,14 @@ func (rt *Route) Backend() Backend { return rt.backend }
 // discards the connection. It reports nil when the backend accepts
 // connections. Used by status/doctor tooling and CI wait steps.
 func (rt *Route) Ready(ctx context.Context) error {
-	conn, err := rt.registry.dialRoute(ctx, rt, "tcp", rt.name+":0")
+	// Dial a port the route accepts: a mapped requested port if the route
+	// has a port map (":0" would never match one), else 0.
+	port := 0
+	for reqPort := range rt.cfg.portMap {
+		port = reqPort
+		break
+	}
+	conn, err := rt.registry.dialRoute(ctx, rt, "tcp", net.JoinHostPort(rt.name, strconv.Itoa(port)))
 	if err != nil {
 		return err
 	}

@@ -1,6 +1,7 @@
 package portless_test
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,7 +23,7 @@ func Example() {
 	go srv.Serve(l)
 	defer srv.Close()
 
-	reg.Add("router.fission", b)
+	reg.Add(context.Background(), "router.fission", b)
 
 	client := reg.HTTPClient()
 	defer client.CloseIdleConnections()

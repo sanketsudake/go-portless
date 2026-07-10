@@ -31,7 +31,7 @@ func TestMiddlewareOrder(t *testing.T) {
 
 	r := portless.New(portless.WithMiddleware(orderMW(&mu, &log, "registry")))
 	defer r.Close()
-	_, err := r.Add("mw.test", backend.TCP(l.Addr().String()),
+	_, err := r.Add(context.Background(), "mw.test", backend.TCP(l.Addr().String()),
 		portless.RouteWithMiddleware(orderMW(&mu, &log, "route")))
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +72,7 @@ func TestConnWrapper(t *testing.T) {
 			return c
 		})))
 	defer r.Close()
-	if _, err := r.Add("wrap.test", backend.TCP(l.Addr().String())); err != nil {
+	if _, err := r.Add(context.Background(), "wrap.test", backend.TCP(l.Addr().String())); err != nil {
 		t.Fatal(err)
 	}
 	roundTrip(t, r, "wrap.test:80")
@@ -90,7 +90,7 @@ func TestMiddlewareCanInjectFaults(t *testing.T) {
 	boom := errors.New("injected fault")
 	r := portless.New()
 	defer r.Close()
-	_, err := r.Add("fault.test", backend.TCP(l.Addr().String()),
+	_, err := r.Add(context.Background(), "fault.test", backend.TCP(l.Addr().String()),
 		portless.RouteWithMiddleware(func(next portless.DialFunc) portless.DialFunc {
 			return func(ctx context.Context, network, address string) (net.Conn, error) {
 				return nil, boom
@@ -115,12 +115,12 @@ func TestRouteWithPortMap(t *testing.T) {
 		mu.Lock()
 		addrs = append(addrs, address)
 		mu.Unlock()
-		return (&net.Dialer{}).DialContext(ctx, network, "127.0.0.1:"+realPortOf(address, realPort))
+		return (&net.Dialer{}).DialContext(ctx, network, "127.0.0.1:"+realPort)
 	})
 
 	r := portless.New()
 	defer r.Close()
-	if _, err := r.Add("pm.test", rec, portless.RouteWithPortMap(map[int]int{80: 9999})); err != nil {
+	if _, err := r.Add(context.Background(), "pm.test", rec, portless.RouteWithPortMap(map[int]int{80: 9999})); err != nil {
 		t.Fatal(err)
 	}
 	// mapped port rewrites the address handed to the backend
@@ -143,6 +143,3 @@ func TestRouteWithPortMap(t *testing.T) {
 		t.Fatal("unmapped port must error")
 	}
 }
-
-// realPortOf lets the recording backend still reach the echo listener.
-func realPortOf(_ string, real string) string { return real }

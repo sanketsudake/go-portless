@@ -30,8 +30,9 @@ func Retryable(err error) error {
 }
 
 // IsRetryable reports whether err indicates a not-ready-yet condition that the
-// dial loop should retry: errors wrapped with Retryable, connection-refused,
-// and network timeouts.
+// dial loop should retry: errors wrapped with Retryable, connection
+// refused/reset, and network timeouts. The caller's own context errors are
+// never retryable.
 func IsRetryable(err error) bool {
 	if err == nil {
 		return false
