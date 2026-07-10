@@ -1,0 +1,39 @@
+version: "2"
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - misspell
+    - unconvert
+    - bodyclose
+    - errorlint
+    - copyloopvar
+  settings:
+    errcheck:
+      # Writes to stdout/stderr are diagnostics; a failed write is not
+      # actionable and checking every Fprint is noise.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (io.Writer).Write
+    staticcheck:
+      # SA1019: we intentionally use the SPDY httpstream API that matches the
+      # pinned client-go; the suggested replacement is not available there.
+      checks:
+        - all
+        - -SA1019
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
+          - bodyclose
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

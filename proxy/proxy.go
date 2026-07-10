@@ -93,7 +93,7 @@ func (p *Proxy) Start(ctx context.Context, listenAddr string) (string, error) {
 	go func() {
 		select {
 		case <-ctx.Done():
-			p.Close()
+			_ = p.Close()
 		case <-p.done:
 		}
 	}()

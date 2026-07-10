@@ -108,7 +108,7 @@ func RouteWithHTTPHealth(port int, path string) RouteOption {
 		if err != nil {
 			return err
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		if resp.StatusCode < 200 || resp.StatusCode > 299 {
 			return fmt.Errorf("health %s: status %s", path, resp.Status)
 		}

@@ -53,7 +53,7 @@ func runServe(ctx context.Context, opts serveOptions, stdout, stderr io.Writer) 
 	// Strict: the forward proxy must reach only registered routes, never fall
 	// back to real network dials (which would make it an open proxy).
 	reg := portless.New(portless.WithStrict())
-	defer reg.Close()
+	defer func() { _ = reg.Close() }()
 
 	proxyAddr := ""
 	if opts.proxyAddr != "" {
@@ -72,7 +72,7 @@ func runServe(ctx context.Context, opts serveOptions, stdout, stderr io.Writer) 
 			fmt.Fprintf(stderr, "portless: %v\n", err)
 			return 1
 		}
-		defer p.Close()
+		defer func() { _ = p.Close() }()
 		proxyAddr = addr
 		scheme := "http"
 		if opts.tls {
@@ -94,7 +94,7 @@ func runServe(ctx context.Context, opts serveOptions, stdout, stderr io.Writer) 
 		fmt.Fprintf(stderr, "portless: chmod control socket: %v\n", err)
 		return 1
 	}
-	defer os.Remove(opts.socket)
+	defer func() { _ = os.Remove(opts.socket) }()
 
 	srv := control.NewServer(reg, control.WithProxyAddr(func() string { return proxyAddr }))
 	fmt.Fprintf(stdout, "control socket at %s\n", opts.socket)
@@ -104,7 +104,7 @@ func runServe(ctx context.Context, opts serveOptions, stdout, stderr io.Writer) 
 
 	select {
 	case <-ctx.Done():
-		srv.Close()
+		_ = srv.Close()
 		<-errc
 		return 0
 	case err := <-errc:

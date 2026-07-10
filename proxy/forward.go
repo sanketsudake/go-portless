@@ -33,7 +33,7 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "portless proxy: "+err.Error(), http.StatusBadGateway)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	stripHopByHop(resp.Header)
 	for k, vv := range resp.Header {

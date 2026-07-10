@@ -23,7 +23,7 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "portless proxy: dial "+r.Host+": "+err.Error(), http.StatusBadGateway)
 		return
 	}
-	defer backendConn.Close()
+	defer func() { _ = backendConn.Close() }()
 
 	hj, ok := w.(http.Hijacker)
 	if !ok {
@@ -35,7 +35,7 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "portless proxy: hijack: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	defer clientConn.Close()
+	defer func() { _ = clientConn.Close() }()
 
 	if _, err := clientConn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n")); err != nil {
 		return
@@ -49,7 +49,9 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var once sync.Once
-	closeBoth := func() { once.Do(func() { clientConn.Close(); backendConn.Close() }) }
+	closeBoth := func() {
+		once.Do(func() { _ = clientConn.Close(); _ = backendConn.Close() })
+	}
 
 	var wg sync.WaitGroup
 	wg.Add(2)

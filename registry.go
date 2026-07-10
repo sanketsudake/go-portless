@@ -234,7 +234,7 @@ func (r *Registry) dialRoute(ctx context.Context, rt *Route, network, address st
 			// Health checks dial the backend directly (no port map or
 			// middleware) so a probe port never collides with the port map.
 			if herr := rt.cfg.health(ctx, rt.backend.DialContext); herr != nil {
-				conn.Close()
+				_ = conn.Close()
 				// A failing health check means "not ready yet": retry until
 				// the route is healthy or the ready timeout elapses.
 				conn, err = nil, Retryable(fmt.Errorf("health check: %w", herr))
@@ -273,7 +273,7 @@ func (r *Registry) dialRoute(ctx context.Context, rt *Route, network, address st
 func dialWaitError(name string, ctx context.Context, lastErr error) error {
 	cause := context.Cause(ctx)
 	if lastErr != nil {
-		return fmt.Errorf("portless: waiting for route %q: %w (last backend error: %v)", name, cause, lastErr)
+		return fmt.Errorf("portless: waiting for route %q: %w (last backend error: %s)", name, cause, lastErr.Error())
 	}
 	return fmt.Errorf("portless: waiting for route %q: %w", name, cause)
 }

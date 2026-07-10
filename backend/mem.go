@@ -32,12 +32,12 @@ func (m *memListener) DialContext(ctx context.Context, network, address string) 
 	case m.conns <- server:
 		return client, nil
 	case <-m.done:
-		client.Close()
-		server.Close()
+		_ = client.Close()
+		_ = server.Close()
 		return nil, errMemClosed
 	case <-ctx.Done():
-		client.Close()
-		server.Close()
+		_ = client.Close()
+		_ = server.Close()
 		return nil, ctx.Err()
 	}
 }

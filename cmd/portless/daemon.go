@@ -51,7 +51,7 @@ func ensureDaemon(ctx context.Context, socket string) (*control.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer devnull.Close()
+	defer func() { _ = devnull.Close() }()
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = devnull, devnull, devnull
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start daemon: %w", err)
@@ -80,6 +80,6 @@ func freePort() (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 	return l.Addr().(*net.TCPAddr).Port, nil
 }

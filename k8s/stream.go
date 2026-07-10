@@ -79,7 +79,7 @@ func (c *pfConn) alive() bool {
 	}
 }
 
-func (c *pfConn) close() { c.conn.Close() }
+func (c *pfConn) close() { _ = c.conn.Close() }
 
 func (c *pfConn) containerPortNum() int { return c.containerPort }
 
@@ -147,8 +147,8 @@ func (s *streamConn) Write(b []byte) (int, error) { return s.data.Write(b) }
 func (s *streamConn) Close() error {
 	s.closeOnce.Do(func() {
 		s.conn.RemoveStreams(s.data, s.errStream)
-		s.data.Close()
-		s.errStream.Close()
+		_ = s.data.Close()
+		_ = s.errStream.Close()
 	})
 	return nil
 }
@@ -172,10 +172,10 @@ func (s *streamConn) armDeadline(t time.Time) {
 	}
 	d := time.Until(t)
 	if d <= 0 {
-		s.Close()
+		_ = s.Close()
 		return
 	}
-	time.AfterFunc(d, func() { s.Close() })
+	time.AfterFunc(d, func() { _ = s.Close() })
 }
 
 // drainError reads the error stream; any content is a forwarding error from
@@ -185,7 +185,7 @@ func (s *streamConn) drainError() {
 	if err == nil && len(msg) > 0 {
 		m := string(msg)
 		s.errMsg.Store(&m)
-		s.Close()
+		_ = s.Close()
 	}
 }
 
