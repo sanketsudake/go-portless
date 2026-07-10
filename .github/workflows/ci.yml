@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        module: ["."]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ matrix.module }}/go.mod
+      - name: Test
+        working-directory: ${{ matrix.module }}
+        run: go test -race -count=2 ./...
+      - name: Vet
+        working-directory: ${{ matrix.module }}
+        run: go vet ./...
+
+  core-deps:
+    name: core stays stdlib-only
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Check non-test imports are stdlib-only
+        run: |
+          deps=$(go list -deps ./... | grep -v '^github.com/sanketsudake/go-portless' || true)
+          nonstd=$(echo "$deps" | xargs -r go list -f '{{if not .Standard}}{{.ImportPath}}{{end}}' 2>/dev/null || true)
+          if [ -n "$nonstd" ]; then
+            echo "core module imports non-stdlib packages in non-test code:"
+            echo "$nonstd"
+            exit 1
+          fi
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
