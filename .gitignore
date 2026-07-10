@@ -6,3 +6,6 @@ go.work.sum
 
 # stray CLI binary from local builds
 cmd/portless/portless
+
+# local-only fission migration notes (not part of the repo)
+docs/fission-adoption.md
