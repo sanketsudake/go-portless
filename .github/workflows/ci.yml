@@ -46,15 +46,35 @@ jobs:
           fi
 
   lint:
+    strategy:
+      matrix:
+        module: [".", "k8s", "cmd/portless"]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version-file: ${{ matrix.module }}/go.mod
       - uses: golangci/golangci-lint-action@v8
         with:
           version: latest
+          working-directory: ${{ matrix.module }}
+
+  govulncheck:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        module: [".", "k8s", "cmd/portless"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ matrix.module }}/go.mod
+      - name: govulncheck
+        working-directory: ${{ matrix.module }}
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
 
   e2e-kind:
     name: k8s port-forward e2e (kind)
