@@ -3,3 +3,6 @@ bin/
 .env
 go.work
 go.work.sum
+
+# stray CLI binary from local builds
+cmd/portless/portless
