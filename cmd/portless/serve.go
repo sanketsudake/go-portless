@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	portless "github.com/sanketsudake/go-portless"
+	"github.com/sanketsudake/go-portless/ca"
 	"github.com/sanketsudake/go-portless/control"
 	"github.com/sanketsudake/go-portless/proxy"
 )
@@ -18,6 +19,8 @@ import (
 type serveOptions struct {
 	socket    string
 	proxyAddr string // "" disables the forward proxy
+	tls       bool   // terminate TLS with the local CA
+	stateDir  string
 }
 
 func cmdServe(args []string, stdout, stderr io.Writer) error {
@@ -26,10 +29,12 @@ func cmdServe(args []string, stdout, stderr io.Writer) error {
 	socket := fs.String("socket", control.DefaultSocketPath(), "control socket path")
 	proxyAddr := fs.String("proxy", "127.0.0.1:0", "forward proxy listen address")
 	noProxy := fs.Bool("no-proxy", false, "disable the forward proxy")
+	tlsOn := fs.Bool("tls", false, "terminate TLS so https://<name> works (trust the CA: portless ca install)")
+	stateDir := fs.String("state-dir", ca.DefaultStateDir(), "CA/state directory")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	opts := serveOptions{socket: *socket, proxyAddr: *proxyAddr}
+	opts := serveOptions{socket: *socket, proxyAddr: *proxyAddr, tls: *tlsOn, stateDir: *stateDir}
 	if *noProxy {
 		opts.proxyAddr = ""
 	}
@@ -52,7 +57,16 @@ func runServe(ctx context.Context, opts serveOptions, stdout, stderr io.Writer) 
 
 	proxyAddr := ""
 	if opts.proxyAddr != "" {
-		p := proxy.New(reg)
+		var popts []proxy.Option
+		if opts.tls {
+			authority, err := ca.Load(opts.stateDir)
+			if err != nil {
+				fmt.Fprintf(stderr, "portless: load CA: %v\n", err)
+				return 1
+			}
+			popts = append(popts, proxy.WithTLS(authority))
+		}
+		p := proxy.New(reg, popts...)
 		addr, err := p.Start(ctx, opts.proxyAddr)
 		if err != nil {
 			fmt.Fprintf(stderr, "portless: %v\n", err)
@@ -60,7 +74,11 @@ func runServe(ctx context.Context, opts serveOptions, stdout, stderr io.Writer) 
 		}
 		defer p.Close()
 		proxyAddr = addr
-		fmt.Fprintf(stdout, "proxy listening on %s\n", addr)
+		scheme := "http"
+		if opts.tls {
+			scheme = "https"
+		}
+		fmt.Fprintf(stdout, "proxy listening on %s (%s://<name> routes)\n", addr, scheme)
 	}
 
 	if err := control.EnsureSocketDir(opts.socket); err != nil {

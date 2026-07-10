@@ -5,6 +5,7 @@ go 1.26.5
 require (
 	github.com/sanketsudake/go-portless v0.0.0
 	github.com/sanketsudake/go-portless/k8s v0.0.0
+	golang.org/x/term v0.45.0
 )
 
 require (
@@ -31,8 +32,7 @@ require (
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/net v0.49.0 // indirect
 	golang.org/x/oauth2 v0.34.0 // indirect
-	golang.org/x/sys v0.40.0 // indirect
-	golang.org/x/term v0.39.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.33.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 	google.golang.org/protobuf v1.36.12-0.20260120151049-f2248ac996af // indirect

@@ -124,8 +124,10 @@ func TestRunSpawnsRegistersAndCleansUp(t *testing.T) {
 
 	// run blocks until the child exits, so drive it in a goroutine.
 	done := make(chan int, 1)
+	outCh := make(chan string, 1)
 	go func() {
-		_, code := runCLI(t, runArgs...)
+		out, code := runCLI(t, runArgs...)
+		outCh <- out
 		done <- code
 	}()
 
@@ -146,7 +148,12 @@ func TestRunSpawnsRegistersAndCleansUp(t *testing.T) {
 			resp.Body.Close()
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("route never became reachable (last err=%v)", err)
+			select {
+			case o := <-outCh:
+				t.Fatalf("route never reachable (last err=%v); run output: %s", err, o)
+			default:
+				t.Fatalf("route never reachable (last err=%v); run still running", err)
+			}
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
