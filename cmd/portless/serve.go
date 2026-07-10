@@ -1,0 +1,97 @@
+package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"io"
+	"net"
+	"os"
+	"os/signal"
+	"syscall"
+
+	portless "github.com/sanketsudake/go-portless"
+	"github.com/sanketsudake/go-portless/control"
+	"github.com/sanketsudake/go-portless/proxy"
+)
+
+type serveOptions struct {
+	socket    string
+	proxyAddr string // "" disables the forward proxy
+}
+
+func cmdServe(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	socket := fs.String("socket", control.DefaultSocketPath(), "control socket path")
+	proxyAddr := fs.String("proxy", "127.0.0.1:0", "forward proxy listen address")
+	noProxy := fs.Bool("no-proxy", false, "disable the forward proxy")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	opts := serveOptions{socket: *socket, proxyAddr: *proxyAddr}
+	if *noProxy {
+		opts.proxyAddr = ""
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if code := runServe(ctx, opts, stdout, stderr); code != 0 {
+		return fmt.Errorf("daemon exited with code %d", code)
+	}
+	return nil
+}
+
+// runServe runs the daemon until ctx is canceled. Split from cmdServe so
+// tests can drive it with their own context.
+func runServe(ctx context.Context, opts serveOptions, stdout, stderr io.Writer) int {
+	reg := portless.New()
+	defer reg.Close()
+
+	proxyAddr := ""
+	if opts.proxyAddr != "" {
+		p := proxy.New(reg)
+		addr, err := p.Start(ctx, opts.proxyAddr)
+		if err != nil {
+			fmt.Fprintf(stderr, "portless: %v\n", err)
+			return 1
+		}
+		defer p.Close()
+		proxyAddr = addr
+		fmt.Fprintf(stdout, "proxy listening on %s\n", addr)
+	}
+
+	if err := control.EnsureSocketDir(opts.socket); err != nil {
+		fmt.Fprintf(stderr, "portless: %v\n", err)
+		return 1
+	}
+	l, err := net.Listen("unix", opts.socket)
+	if err != nil {
+		fmt.Fprintf(stderr, "portless: listen control socket: %v\n", err)
+		return 1
+	}
+	if err := os.Chmod(opts.socket, 0o600); err != nil {
+		fmt.Fprintf(stderr, "portless: chmod control socket: %v\n", err)
+		return 1
+	}
+	defer os.Remove(opts.socket)
+
+	srv := control.NewServer(reg, control.WithProxyAddr(func() string { return proxyAddr }))
+	fmt.Fprintf(stdout, "control socket at %s\n", opts.socket)
+
+	errc := make(chan error, 1)
+	go func() { errc <- srv.Serve(l) }()
+
+	select {
+	case <-ctx.Done():
+		srv.Close()
+		<-errc
+		return 0
+	case err := <-errc:
+		if err != nil {
+			fmt.Fprintf(stderr, "portless: control server: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+}
