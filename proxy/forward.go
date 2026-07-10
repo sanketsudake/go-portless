@@ -15,6 +15,13 @@ var hopByHop = []string{
 // handleAbsolute forwards a plain-HTTP absolute-form request
 // (GET http://name:port/path) through the registry-dialing transport.
 func (p *Proxy) handleAbsolute(w http.ResponseWriter, r *http.Request) {
+	p.forward(w, r)
+}
+
+// forward re-issues r through the registry-dialing transport and copies the
+// response back. r.URL must be absolute (absolute-form requests already are;
+// TLS-terminated requests have their scheme/host filled in first).
+func (p *Proxy) forward(w http.ResponseWriter, r *http.Request) {
 	out := r.Clone(r.Context())
 	out.RequestURI = "" // client requests must not set it
 	out.Header = r.Header.Clone()

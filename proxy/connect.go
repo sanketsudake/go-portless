@@ -10,8 +10,13 @@ import (
 type closeWriter interface{ CloseWrite() error }
 
 // handleConnect dials the target through the registry (blocking until the
-// backend is ready), then tunnels bytes both ways with TCP half-close.
+// backend is ready), then tunnels bytes both ways with TCP half-close. With
+// TLS termination enabled, it decrypts instead of tunneling.
 func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
+	if p.tls != nil {
+		p.terminateTLS(w, r)
+		return
+	}
 	backendConn, err := p.dialer.DialContext(r.Context(), "tcp", r.Host)
 	if err != nil {
 		p.logger.Debug("proxy: CONNECT dial failed", "target", r.Host, "err", err)

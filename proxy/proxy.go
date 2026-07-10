@@ -17,6 +17,7 @@ package proxy
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -35,12 +36,29 @@ func WithLogger(l *slog.Logger) Option {
 	return func(p *Proxy) { p.logger = l }
 }
 
+// CertIssuer supplies TLS certificates for route names, keyed by SNI.
+// *ca.CA implements it.
+type CertIssuer interface {
+	// ServerTLSConfig returns a config whose GetCertificate issues a leaf
+	// certificate for the requested SNI name.
+	ServerTLSConfig() *tls.Config
+}
+
+// WithTLS makes the proxy terminate TLS: a CONNECT to name:443 is answered
+// with a certificate for name (from issuer) and the decrypted HTTP is
+// forwarded to the backend. Without it, CONNECT is passthrough. Clients must
+// trust the issuer's CA (see `portless ca install`).
+func WithTLS(issuer CertIssuer) Option {
+	return func(p *Proxy) { p.tls = issuer }
+}
+
 // Proxy is an HTTP forward proxy that dials through a ContextDialer.
 type Proxy struct {
 	dialer    portless.ContextDialer
 	logger    *slog.Logger
 	transport *http.Transport
 	server    *http.Server // built in New; Close is always able to reach it
+	tls       CertIssuer   // non-nil enables TLS termination on CONNECT
 
 	closeOnce sync.Once
 	done      chan struct{} // closed by Close; stops the Start watcher goroutine
