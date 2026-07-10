@@ -13,7 +13,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
-        module: [".", "cmd/portless"]
+        module: [".", "k8s", "cmd/portless"]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -55,3 +55,18 @@ jobs:
       - uses: golangci/golangci-lint-action@v8
         with:
           version: latest
+
+  e2e-kind:
+    name: k8s port-forward e2e (kind)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: k8s/go.mod
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: portless-e2e
+      - name: Run e2e (pod-delete self-heal)
+        working-directory: k8s
+        run: go test -tags kinde2e -timeout 10m -run TestE2E ./...
