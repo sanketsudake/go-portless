@@ -113,4 +113,4 @@ During development the sub-modules resolve the core via a `replace` directive; t
 
 ## License
 
-See [LICENSE](LICENSE).
+Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
