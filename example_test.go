@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 
 	portless "github.com/sanketsudake/go-portless"
@@ -36,4 +37,46 @@ func Example() {
 	body, _ := io.ReadAll(resp.Body)
 	fmt.Println(string(body))
 	// Output: hello from web
+}
+
+// ExampleBackend_future shows the port-free pattern: the OS assigns the port,
+// and dials to the name block until the server hands its listener over — no
+// port is picked, hardcoded, or raced for.
+func ExampleFutureBackend() {
+	reg := portless.New()
+	defer reg.Close()
+
+	f := backend.Future()
+	reg.Add(context.Background(), "web", f)
+
+	l, _ := net.Listen("tcp", "127.0.0.1:0") // OS assigns the port
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "ready")
+	})}
+	go srv.Serve(l)
+	defer srv.Close()
+	f.SetListener(l) // dials to "web" now succeed
+
+	client := reg.HTTPClient()
+	defer client.CloseIdleConnections()
+	resp, err := client.Get("http://web/")
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	fmt.Println(string(body))
+	// Output: ready
+}
+
+// ExampleURL builds route URLs without string surgery.
+func ExampleURL() {
+	fmt.Println(portless.URL("web", 0, "/healthz"))
+	fmt.Println(portless.URL("web", 8888, "/fn"))
+	fmt.Println(portless.WSURL("web", 0, "/stream"))
+	// Output:
+	// http://web/healthz
+	// http://web:8888/fn
+	// ws://web/stream
 }
