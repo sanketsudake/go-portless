@@ -1,6 +1,11 @@
 package portless
 
-import "context"
+import (
+	"context"
+	"fmt"
+	"net"
+	"strconv"
+)
 
 // Route is a named routing entry in a Registry.
 type Route struct {
@@ -8,6 +13,34 @@ type Route struct {
 	backend  Backend
 	cfg      routeConfig
 	registry *Registry
+	dial     DialFunc // compiled chain: registry mw → route mw → portmap → backend
+}
+
+// buildDial compiles the route's dial chain.
+func (rt *Route) buildDial(registryMW []Middleware) {
+	base := rt.backend.DialContext
+	if len(rt.cfg.portMap) > 0 {
+		portMap, backendDial := rt.cfg.portMap, base
+		base = func(ctx context.Context, network, address string) (net.Conn, error) {
+			host, portStr, err := net.SplitHostPort(address)
+			if err != nil {
+				return nil, fmt.Errorf("portless: route %q: address %q has no port to map", rt.name, address)
+			}
+			port, err := strconv.Atoi(portStr)
+			if err != nil {
+				return nil, fmt.Errorf("portless: route %q: bad port in %q: %w", rt.name, address, err)
+			}
+			mapped, ok := portMap[port]
+			if !ok {
+				return nil, fmt.Errorf("portless: route %q: port %d not in port map", rt.name, port)
+			}
+			return backendDial(ctx, network, net.JoinHostPort(host, strconv.Itoa(mapped)))
+		}
+	}
+	mws := make([]Middleware, 0, len(registryMW)+len(rt.cfg.middleware))
+	mws = append(mws, registryMW...)
+	mws = append(mws, rt.cfg.middleware...)
+	rt.dial = chain(base, mws...)
 }
 
 // Name returns the route's registered name.

@@ -63,6 +63,16 @@ func (r *Registry) Add(name string, b Backend, opts ...RouteOption) (*Route, err
 		o(&rcfg)
 	}
 	rt := &Route{name: name, backend: b, cfg: rcfg, registry: r}
+	rt.buildDial(r.cfg.middleware)
+
+	if es, ok := b.(EventSinkSetter); ok {
+		es.SetEventSink(func(e Event) {
+			if e.Route == "" {
+				e.Route = name
+			}
+			r.emit(e)
+		})
+	}
 
 	r.mu.Lock()
 	if r.closed {
@@ -96,6 +106,7 @@ func (r *Registry) Add(name string, b Backend, opts ...RouteOption) (*Route, err
 	}
 	r.routes[key] = rt
 	r.mu.Unlock()
+	r.emit(Event{Type: EventRouteAdded, Route: name})
 	return rt, nil
 }
 
@@ -112,6 +123,7 @@ func (r *Registry) Remove(ctx context.Context, name string) error {
 	if !ok || rt == nil {
 		return fmt.Errorf("portless: remove %q: %w", name, ErrRouteNotFound)
 	}
+	r.emit(Event{Type: EventRouteRemoved, Route: rt.name})
 	if s, ok := rt.backend.(Stopper); ok {
 		return s.Stop(ctx)
 	}
@@ -192,27 +204,44 @@ func (r *Registry) DialContext(ctx context.Context, network, address string) (ne
 	return r.dialRoute(ctx, rt, network, address)
 }
 
-// dialRoute runs the readiness loop: retry Retryable backend errors with
-// backoff until success, terminal error, ctx expiry, ready timeout, or Close.
+// dialRoute runs the readiness loop: retry Retryable backend errors (and
+// failing health checks) with backoff until success, terminal error, ctx
+// expiry, ready timeout, or Close.
 func (r *Registry) dialRoute(ctx context.Context, rt *Route, network, address string) (net.Conn, error) {
 	ctx, cancel := context.WithTimeoutCause(ctx, rt.cfg.readyTimeout,
 		fmt.Errorf("portless: route %q not ready within %v", rt.name, rt.cfg.readyTimeout))
 	defer cancel()
 
+	start := time.Now()
+	r.emit(Event{Type: EventDialStart, Route: rt.name, Address: address})
+
+	fail := func(err error) (net.Conn, error) {
+		r.emit(Event{Type: EventDialError, Route: rt.name, Address: address, Err: err})
+		return nil, err
+	}
+
 	bo := backoff.New(25*time.Millisecond, 500*time.Millisecond)
 	var lastErr error
-	for {
-		conn, err := rt.backend.DialContext(ctx, network, address)
+	for attempt := 0; ; attempt++ {
+		conn, err := rt.dial(ctx, network, address)
+		if err == nil && rt.cfg.health != nil {
+			if herr := rt.cfg.health(ctx, rt.dial); herr != nil {
+				conn.Close()
+				conn, err = nil, Retryable(fmt.Errorf("health check: %w", herr))
+			}
+		}
 		if err == nil {
+			r.emit(Event{Type: EventDialSuccess, Route: rt.name, Address: address, Elapsed: time.Since(start)})
 			return conn, nil
 		}
 		if ctxErr := context.Cause(ctx); ctxErr != nil {
-			return nil, dialWaitError(rt.name, ctx, lastErr)
+			return fail(dialWaitError(rt.name, ctx, lastErr))
 		}
 		if !IsRetryable(err) {
-			return nil, fmt.Errorf("portless: dial route %q: %w", rt.name, err)
+			return fail(fmt.Errorf("portless: dial route %q: %w", rt.name, err))
 		}
 		lastErr = err
+		r.emit(Event{Type: EventDialRetry, Route: rt.name, Address: address, Attempt: attempt + 1, Err: err})
 		r.cfg.logger.Debug("portless: backend not ready, retrying",
 			"route", rt.name, "address", address, "err", err)
 
@@ -220,10 +249,10 @@ func (r *Registry) dialRoute(ctx context.Context, rt *Route, network, address st
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return nil, dialWaitError(rt.name, ctx, lastErr)
+			return fail(dialWaitError(rt.name, ctx, lastErr))
 		case <-r.done:
 			timer.Stop()
-			return nil, ErrClosed
+			return fail(ErrClosed)
 		case <-timer.C:
 		}
 	}
