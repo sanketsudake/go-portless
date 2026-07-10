@@ -1,0 +1,60 @@
+version: 2
+
+updates:
+  # Core module (stdlib + test-only deps).
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      go:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  # Kubernetes backend module (client-go pulls many k8s.io/* deps).
+  - package-ecosystem: gomod
+    directory: "/k8s"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      kubernetes:
+        patterns: ["k8s.io/*", "sigs.k8s.io/*"]
+      golang-x:
+        patterns: ["golang.org/x/*"]
+      other:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    ignore:
+      # Internal cross-module version is pinned during coordinated releases,
+      # not by Dependabot.
+      - dependency-name: "github.com/sanketsudake/go-portless"
+
+  # CLI module.
+  - package-ecosystem: gomod
+    directory: "/cmd/portless"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      kubernetes:
+        patterns: ["k8s.io/*", "sigs.k8s.io/*"]
+      golang-x:
+        patterns: ["golang.org/x/*"]
+      other:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: "github.com/sanketsudake/go-portless"
+      - dependency-name: "github.com/sanketsudake/go-portless/k8s"
+
+  # GitHub Actions used by the workflows.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns: ["*"]
