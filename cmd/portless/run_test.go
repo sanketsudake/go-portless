@@ -118,65 +118,77 @@ func TestRunSpawnsRegistersAndCleansUp(t *testing.T) {
 	os.Setenv("GO_PORTLESS_HELPER", "1")
 	t.Cleanup(func() { os.Unsetenv("GO_PORTLESS_HELPER") })
 
-	// The child binds $PORT and exits after one request.
-	helper := []string{os.Args[0], "-test.run=TestHelperProcess"}
-	runArgs := append([]string{"run", "web", "--socket", socket, "--"}, helper...)
-
-	// run blocks until the child exits, so drive it in a goroutine.
-	done := make(chan int, 1)
-	outCh := make(chan string, 1)
-	go func() {
-		out, code := runCLI(t, runArgs...)
-		outCh <- out
-		done <- code
-	}()
-
-	// The route should become reachable through the proxy (proves run picked a
-	// port, set $PORT, spawned the child, and registered the name).
 	client := proxyClient(t, proxyAddr)
-	var got string
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		resp, err := client.Get("http://web/")
+
+	// `run` assigns a free port then the child binds it; that has an inherent
+	// race (documented), and a `go test` child can be slow to start on a loaded
+	// runner. Retry with a fresh name/port so a lost race doesn't flake.
+	var lastDiag string
+	for attempt := range 3 {
+		name := fmt.Sprintf("web%d", attempt)
+		helper := []string{os.Args[0], "-test.run=TestHelperProcess"}
+		runArgs := append([]string{"run", name, "--socket", socket, "--"}, helper...)
+
+		done := make(chan int, 1)
+		outCh := make(chan string, 1)
+		go func() {
+			out, code := runCLI(t, runArgs...)
+			outCh <- out
+			done <- code
+		}()
+
+		reached := reachRoute(client, name, done, outCh, &lastDiag)
+		if !reached {
+			continue // child exited before serving; try again
+		}
+
+		// The helper exits after that one request; run returns and deregisters.
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("run did not return after child exit")
+		}
+		routes, err := control.NewClient(socket).Routes(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range routes {
+			if r.Name == name {
+				t.Fatal("run did not deregister the route on child exit")
+			}
+		}
+		return // success
+	}
+	t.Fatalf("route never became reachable after retries: %s", lastDiag)
+}
+
+// reachRoute polls the proxy for name until it serves "ok", or reports false
+// if run exits early (child never served). It records a diagnostic string.
+func reachRoute(client *http.Client, name string, done <-chan int, outCh <-chan string, diag *string) bool {
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		select {
+		case code := <-done:
+			*diag = fmt.Sprintf("run exited early (code=%d): %s", code, <-outCh)
+			return false
+		default:
+		}
+		resp, err := client.Get("http://" + name + "/")
 		if err == nil && resp.StatusCode == http.StatusOK {
 			b, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
-			got = string(b)
-			break
+			*diag = fmt.Sprintf("body=%q", b)
+			return string(b) == "ok"
 		}
 		if resp != nil {
 			resp.Body.Close()
 		}
-		if time.Now().After(deadline) {
-			select {
-			case o := <-outCh:
-				t.Fatalf("route never reachable (last err=%v); run output: %s", err, o)
-			default:
-				t.Fatalf("route never reachable (last err=%v); run still running", err)
-			}
+		if err != nil {
+			*diag = err.Error()
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	if got != "ok" {
-		t.Fatalf("body = %q, want ok", got)
-	}
-
-	// The helper exits after that request; run should return and deregister.
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("run did not return after child exit")
-	}
-
-	routes, err := control.NewClient(socket).Routes(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, r := range routes {
-		if r.Name == "web" {
-			t.Fatal("run did not deregister the route on child exit")
-		}
-	}
+	return false
 }
 
 func TestRunPropagatesExitCode(t *testing.T) {
