@@ -90,6 +90,14 @@ func (p *Proxy) Start(ctx context.Context, listenAddr string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("proxy: listen %s: %w", listenAddr, err)
 	}
+	// If ctx is already canceled, don't begin serving — close the listener and
+	// return its (now dead) address. net.Listen has already bound the port, so
+	// this must happen before Serve or a queued connection could be served.
+	if ctx.Err() != nil {
+		addr := l.Addr().String()
+		_ = l.Close()
+		return addr, nil
+	}
 	go func() {
 		select {
 		case <-ctx.Done():

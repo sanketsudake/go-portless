@@ -1,5 +1,12 @@
 # go-portless
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/sanketsudake/go-portless.svg)](https://pkg.go.dev/github.com/sanketsudake/go-portless)
+[![Go Report Card](https://goreportcard.com/badge/github.com/sanketsudake/go-portless)](https://goreportcard.com/report/github.com/sanketsudake/go-portless)
+[![CI](https://github.com/sanketsudake/go-portless/actions/workflows/ci.yml/badge.svg)](https://github.com/sanketsudake/go-portless/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/sanketsudake/go-portless/actions/workflows/codeql.yml/badge.svg)](https://github.com/sanketsudake/go-portless/actions/workflows/codeql.yml)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/sanketsudake/go-portless)](go.mod)
+
 Dial services by name in Go tests and CI — with readiness built into the dial.
 
 Register a name and dial it instead of hardcoding `127.0.0.1:8888` or racing to find a free port.
