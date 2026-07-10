@@ -3,8 +3,8 @@ module github.com/sanketsudake/go-portless/cmd/portless
 go 1.26.5
 
 require (
-	github.com/sanketsudake/go-portless v0.0.0
-	github.com/sanketsudake/go-portless/k8s v0.0.0
+	github.com/sanketsudake/go-portless v0.1.0
+	github.com/sanketsudake/go-portless/k8s v0.1.0
 	golang.org/x/term v0.45.0
 )
 
@@ -51,7 +51,3 @@ require (
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.2 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
-
-replace github.com/sanketsudake/go-portless => ../../
-
-replace github.com/sanketsudake/go-portless/k8s => ../../k8s
