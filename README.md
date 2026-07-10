@@ -40,22 +40,7 @@ Runnable examples and the full API are on [pkg.go.dev](https://pkg.go.dev/github
 
 ## How it works
 
-```mermaid
-flowchart TB
-    caller["Caller<br/><b>DialContext</b>(name:port)"]:::process
-    lookup{"Route<br/>registered?"}:::process
-    fallback["Fallback dialer<br/>(or ErrRouteNotFound)"]:::external
-    ready["Readiness loop<br/>retry while not ready"]:::lease
-    backend["Backend<br/>returns net.Conn"]:::resource
-    caller --> lookup
-    lookup -->|"<b>no</b>"| fallback
-    lookup -->|"<b>yes</b>"| ready
-    ready -->|"<b>middleware, port map</b>"| backend
-    classDef process fill:#38bdf8,stroke:#0369a1,color:#fff
-    classDef external fill:#64748b,stroke:#334155,color:#fff
-    classDef lease fill:#f59e0b,stroke:#b45309,color:#fff
-    classDef resource fill:#fb7185,stroke:#be123c,color:#fff
-```
+<img src="docs/img/dial-path.png" alt="A dial resolves the route name, falls back for unknown names, then runs the readiness loop through middleware and the port map to the backend, which returns a net.Conn." width="480">
 
 `Registry.DialContext` has the same shape as `net.Dialer.DialContext`, so HTTP, WebSockets, gRPC, and raw TCP all route through one path.
 

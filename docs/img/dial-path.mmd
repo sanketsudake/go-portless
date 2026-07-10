@@ -1,0 +1,14 @@
+flowchart TB
+    caller["Caller<br/><b>DialContext</b>(name:port)"]:::process
+    lookup{"Route<br/>registered?"}:::process
+    fallback["Fallback dialer<br/>(or ErrRouteNotFound)"]:::external
+    ready["Readiness loop<br/>retry while not ready"]:::lease
+    backend["Backend<br/>returns net.Conn"]:::resource
+    caller --> lookup
+    lookup -->|"<b>no</b>"| fallback
+    lookup -->|"<b>yes</b>"| ready
+    ready -->|"<b>middleware, port map</b>"| backend
+    classDef process fill:#38bdf8,stroke:#0369a1,color:#fff
+    classDef external fill:#64748b,stroke:#334155,color:#fff
+    classDef lease fill:#f59e0b,stroke:#b45309,color:#fff
+    classDef resource fill:#fb7185,stroke:#be123c,color:#fff
