@@ -4,6 +4,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -19,15 +20,18 @@ func init() {
 const usage = `portless — port-free service routing for tests and CI
 
 Usage:
+  portless run    NAME [--port-env VAR] -- CMD [args...]   run a process on an assigned port
+  portless alias  NAME HOST:PORT [--socket PATH]           name an already-running service
   portless serve  [--socket PATH] [--proxy ADDR] [--no-proxy]
-  portless route  add NAME (--tcp HOST:PORT) [--socket PATH]
+  portless route  add NAME (--tcp HOST:PORT | --k8s-service NS/NAME) [--socket PATH]
   portless route  list [--json] [--socket PATH]
   portless route  rm NAME [--socket PATH]
   portless env    [--shell sh|fish|github] [--socket PATH]
   portless status [--json] [--socket PATH]
   portless doctor [NAME...] [--timeout DUR] [--socket PATH]
 
-The control socket defaults to $PORTLESS_SOCKET, then
+run and alias start a shared background daemon automatically if one is not
+already running. The control socket defaults to $PORTLESS_SOCKET, then
 $XDG_RUNTIME_DIR/portless.sock, then a per-user temp path.
 `
 
@@ -44,6 +48,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	var err error
 	switch cmd {
+	case "run":
+		err = cmdRun(rest, stdout, stderr)
+	case "alias":
+		err = cmdAlias(rest, stdout, stderr)
 	case "serve":
 		err = cmdServe(rest, stdout, stderr)
 	case "route":
@@ -62,6 +70,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if err != nil {
+		// `run` propagates its child's exit code verbatim.
+		if ec, ok := errors.AsType[*exitCodeError](err); ok {
+			return ec.code
+		}
 		fmt.Fprintf(stderr, "portless: %v\n", err)
 		return 1
 	}
