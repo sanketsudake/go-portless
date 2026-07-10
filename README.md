@@ -12,6 +12,25 @@ Inspired by [portless.sh](https://portless.sh), but built for test infrastructur
 A single mechanism, `Registry.DialContext`, has the same shape as `net.Dialer.DialContext`, so it drops into `http.Transport`, `grpc.WithContextDialer`, and `websocket.Dialer.NetDialContext`.
 Names resolve at the L4 dial layer, so HTTP, WebSockets, gRPC, and raw TCP all work through one path — no more rewriting `http://` into `ws://` by hand.
 
+A dial resolves the name, then blocks in the readiness loop until the backend accepts — so a test dials a service that is still starting instead of polling for it:
+
+```mermaid
+flowchart TB
+    caller["Caller<br/><b>DialContext</b>(name:port)"]:::process
+    lookup{"Route<br/>registered?"}:::process
+    fallback["Fallback dialer<br/>(or ErrRouteNotFound)"]:::external
+    ready["Readiness loop<br/>retry while not ready"]:::lease
+    backend["Backend<br/>returns net.Conn"]:::resource
+    caller --> lookup
+    lookup -->|"<b>no</b>"| fallback
+    lookup -->|"<b>yes</b>"| ready
+    ready -->|"<b>middleware, port map</b>"| backend
+    classDef process fill:#38bdf8,stroke:#0369a1,color:#fff
+    classDef external fill:#64748b,stroke:#334155,color:#fff
+    classDef lease fill:#f59e0b,stroke:#b45309,color:#fff
+    classDef resource fill:#fb7185,stroke:#be123c,color:#fff
+```
+
 ## Install
 
 ```sh
@@ -96,6 +115,25 @@ portless route add router.fission --k8s-service fission/router
 portless doctor router.fission                    # wait once until ready
 eval "$(portless env)"                            # export HTTP_PROXY / HTTPS_PROXY / NO_PROXY
 curl http://router.fission/healthz                # reaches the pod through the proxy
+```
+
+A request from curl reaches a pod through the same readiness-aware dial the library uses:
+
+```mermaid
+flowchart TB
+    curl["curl (HTTP_PROXY)<br/>router.fission"]:::external
+    proxy["portless proxy<br/>strict registry"]:::process
+    ready["Readiness loop<br/>blocks until ready"]:::lease
+    k8s["k8s backend<br/>SPDY stream per dial"]:::process
+    pod["Ready pod"]:::resource
+    curl -->|"<b>1.</b> absolute-form / CONNECT"| proxy
+    proxy -->|"<b>2.</b> dial by name"| ready
+    ready -->|"<b>3.</b> resolve + forward"| k8s
+    k8s -->|"<b>4.</b> stream"| pod
+    classDef external fill:#64748b,stroke:#334155,color:#fff
+    classDef process fill:#38bdf8,stroke:#0369a1,color:#fff
+    classDef lease fill:#f59e0b,stroke:#b45309,color:#fff
+    classDef resource fill:#fb7185,stroke:#be123c,color:#fff
 ```
 
 The daemon fronts the proxy with a strict registry, so it only reaches registered routes — never a fallback network dial.
