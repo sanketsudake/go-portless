@@ -2,6 +2,7 @@ package portless
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"net"
@@ -134,6 +135,31 @@ func RouteWithHTTPHealth(port int, path string) RouteOption {
 			return fmt.Errorf("health %s: status %s", path, resp.Status)
 		}
 		return nil
+	})
+}
+
+// RouteWithTLSHealth gates readiness on a TLS handshake succeeding on the
+// given backend port: "accepts TCP" and "able to serve TLS" genuinely differ
+// (bad cert material, TLS config regressions), so TLS routes should probe the
+// handshake, not the accept.
+//
+// A nil cfg defaults to InsecureSkipVerify — correct for a readiness probe,
+// which checks liveness of TLS serving, not peer identity; verification
+// against a not-yet-trusted test CA would keep the route not-ready forever.
+// Pass an explicit cfg to verify identity as part of readiness.
+func RouteWithTLSHealth(port int, cfg *tls.Config) RouteOption {
+	if cfg == nil {
+		cfg = &tls.Config{InsecureSkipVerify: true} // #nosec G402 -- liveness probe, not identity check (see doc comment)
+	}
+	return RouteWithHealthCheck(func(ctx context.Context, dial DialFunc) error {
+		conn, err := dial(ctx, "tcp", net.JoinHostPort("localhost", fmt.Sprint(port)))
+		if err != nil {
+			return err
+		}
+		defer func() { _ = conn.Close() }()
+		tc := tls.Client(conn, cfg)
+		defer func() { _ = tc.Close() }()
+		return tc.HandshakeContext(ctx)
 	})
 }
 

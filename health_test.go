@@ -97,3 +97,53 @@ func TestRouteWithHTTPHealth(t *testing.T) {
 		t.Fatal("dial returned before HTTP health passed")
 	}
 }
+
+func TestRouteWithTLSHealthReadyWhenTLSServes(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		fmt.Fprint(w, "secure")
+	}))
+	defer srv.Close()
+	addr := srv.Listener.Addr().String()
+	_, portStr, _ := net.SplitHostPort(addr)
+	var port int
+	fmt.Sscanf(portStr, "%d", &port)
+
+	r := portless.New()
+	defer r.Close()
+	_, err := r.Add(context.Background(), "tls.test", backend.TCP(addr),
+		portless.RouteWithReadyTimeout(3*time.Second),
+		portless.RouteWithTLSHealth(port, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, err := r.DialContext(ctx, "tcp", "tls.test:443")
+	if err != nil {
+		t.Fatalf("TLS-serving backend should be ready under TLS health: %v", err)
+	}
+	conn.Close()
+}
+
+func TestRouteWithTLSHealthPlainTCPNeverReady(t *testing.T) {
+	l := echoListener(t) // accepts TCP, never speaks TLS
+	_, portStr, _ := net.SplitHostPort(l.Addr().String())
+	var port int
+	fmt.Sscanf(portStr, "%d", &port)
+
+	r := portless.New()
+	defer r.Close()
+	_, err := r.Add(context.Background(), "plain.test", backend.TCP(l.Addr().String()),
+		portless.RouteWithReadyTimeout(300*time.Millisecond),
+		portless.RouteWithTLSHealth(port, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := r.DialContext(context.Background(), "tcp", "plain.test:443"); err == nil {
+		t.Fatal("plain-TCP backend must never become ready under TLS health")
+	} else if !strings.Contains(err.Error(), "health check") {
+		t.Fatalf("error should carry the health-check failure, got: %v", err)
+	}
+}
