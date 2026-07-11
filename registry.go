@@ -39,7 +39,9 @@ type Registry struct {
 	defaultClient    *http.Client
 
 	// hasRewrites lets the per-request host-rewrite path no-op with one
-	// atomic load when no route declares a rewrite (the common case).
+	// atomic load until a rewrite-declaring route is first registered (the
+	// common case is never). It is sticky: Remove does not clear it, so a
+	// registry that once had a rewrite keeps taking the lookup path.
 	hasRewrites atomic.Bool
 }
 
