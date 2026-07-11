@@ -95,6 +95,9 @@ func (s *Server) handleListRoutes(w http.ResponseWriter, r *http.Request) {
 		if spec, ok := s.specs[strings.ToLower(rt.Name())]; ok {
 			info.Type, info.Config = spec.Type, spec.Config
 		}
+		if addr, ok := rt.Addr(); ok {
+			info.Addr = addr.String()
+		}
 		out = append(out, info)
 	}
 	writeJSON(w, http.StatusOK, out)

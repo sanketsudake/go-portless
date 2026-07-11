@@ -55,6 +55,20 @@ func (rt *Route) HostRewrite() (string, bool) {
 	return rt.cfg.hostRewrite, rt.cfg.hostRewrite != ""
 }
 
+// Addr returns the concrete address the route's backend dials, when the
+// backend exposes one (see Addresser). It lets registry-external consumers —
+// env vars handed to subprocesses, plain clients outside the registry — be
+// pointed at the real address without keeping a parallel name→addr map.
+// ok is false when the backend has no address (yet).
+func (rt *Route) Addr() (net.Addr, bool) {
+	a, ok := rt.backend.(Addresser)
+	if !ok {
+		return nil, false
+	}
+	addr := a.Addr()
+	return addr, addr != nil
+}
+
 // Ready dials the route once (blocking through the readiness loop) and
 // discards the connection. It reports nil when the backend accepts
 // connections. Used by status/doctor tooling and CI wait steps.

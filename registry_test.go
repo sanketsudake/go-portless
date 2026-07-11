@@ -126,6 +126,52 @@ func TestDialUnknownNameStrictByDefault(t *testing.T) {
 	}
 }
 
+func TestRouteAddr(t *testing.T) {
+	r := portless.New()
+	defer r.Close()
+
+	l := echoListener(t)
+	lisRoute, err := r.Add(context.Background(), "lis.test", backend.Listener(l))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if addr, ok := lisRoute.Addr(); !ok || addr.String() != l.Addr().String() {
+		t.Fatalf("listener route Addr = %v, %v; want %v, true", addr, ok, l.Addr())
+	}
+
+	tcpRoute, err := r.Add(context.Background(), "tcp.test", backend.TCP("example.com:9000"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if addr, ok := tcpRoute.Addr(); !ok || addr.String() != "example.com:9000" || addr.Network() != "tcp" {
+		t.Fatalf("tcp route Addr = %v, %v; want example.com:9000, true", addr, ok)
+	}
+
+	f := backend.Future()
+	futRoute, err := r.Add(context.Background(), "fut.test", f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if addr, ok := futRoute.Addr(); ok {
+		t.Fatalf("unset future route Addr = %v, want ok=false", addr)
+	}
+	f.SetListener(l)
+	if addr, ok := futRoute.Addr(); !ok || addr.String() != l.Addr().String() {
+		t.Fatalf("set future route Addr = %v, %v; want %v, true", addr, ok, l.Addr())
+	}
+
+	mb, _ := backend.Mem()
+	memRoute, err := r.Add(context.Background(), "mem.test", mb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Mem is its own net.Listener, so it reports its placeholder address on
+	// the non-dialable "mem" network.
+	if addr, ok := memRoute.Addr(); !ok || addr.Network() != "mem" {
+		t.Fatalf("mem route Addr = %v, %v; want a mem-network placeholder", addr, ok)
+	}
+}
+
 func TestDialClosedRegistry(t *testing.T) {
 	r := portless.New()
 	r.Close()

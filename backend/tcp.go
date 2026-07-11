@@ -23,3 +23,12 @@ type tcpBackend struct {
 func (b *tcpBackend) DialContext(ctx context.Context, network, _ string) (net.Conn, error) {
 	return b.dialer.DialContext(ctx, network, b.addr)
 }
+
+// Addr exposes the configured address (portless.Addresser).
+func (b *tcpBackend) Addr() net.Addr { return tcpAddr(b.addr) }
+
+// tcpAddr is a net.Addr over a not-yet-resolved "host:port" string.
+type tcpAddr string
+
+func (a tcpAddr) Network() string { return "tcp" }
+func (a tcpAddr) String() string  { return string(a) }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/sanketsudake/go-portless/backend"
 	"github.com/sanketsudake/go-portless/control"
 )
 
@@ -30,6 +31,10 @@ func cmdAlias(args []string, stdout, stderr io.Writer) error {
 		return errors.New("usage: portless alias NAME HOST:PORT")
 	}
 	name, addr := pos[0], pos[1]
+	// Validate client-side for fast feedback; the daemon re-validates.
+	if _, err := backend.ParseTCP(addr); err != nil {
+		return err
+	}
 
 	ctx := context.Background()
 	c, err := ensureDaemon(ctx, *socket)
