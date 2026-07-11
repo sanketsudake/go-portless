@@ -3,7 +3,7 @@ module github.com/sanketsudake/go-portless/k8s
 go 1.26.0
 
 require (
-	github.com/sanketsudake/go-portless v0.1.0
+	github.com/sanketsudake/go-portless v0.2.0
 	k8s.io/api v0.36.2
 	k8s.io/apimachinery v0.36.2
 	k8s.io/client-go v0.36.2
@@ -50,5 +50,3 @@ require (
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.2 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
-
-replace github.com/sanketsudake/go-portless => ../
