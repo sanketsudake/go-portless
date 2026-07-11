@@ -136,6 +136,24 @@ func (r *Registry) Add(ctx context.Context, name string, b Backend, opts ...Rout
 	return rt, nil
 }
 
+// AddReady registers name with backend b and blocks until the route accepts
+// connections (bounded by ctx and the route's ready timeout). If readiness
+// fails, the route is removed again, so the name is immediately reusable —
+// transactional setup for callers whose bootstrap is "register, wait, then
+// bind dependent resources", without a Remove on every error path.
+func (r *Registry) AddReady(ctx context.Context, name string, b Backend, opts ...RouteOption) (*Route, error) {
+	rt, err := r.Add(ctx, name, b, opts...)
+	if err != nil {
+		return nil, err
+	}
+	if err := rt.Ready(ctx); err != nil {
+		// ctx may already be expired; cleanup must still run.
+		_ = r.Remove(context.WithoutCancel(ctx), name)
+		return nil, fmt.Errorf("portless: add ready %q: %w", name, err)
+	}
+	return rt, nil
+}
+
 // Remove unregisters name. If the backend implements Stopper, Stop is called
 // with ctx.
 func (r *Registry) Remove(ctx context.Context, name string) error {
