@@ -70,6 +70,37 @@ The coder/websocket path works because Go's HTTP/1.1 101-upgrade response bodies
 | `k8s.PortForward` | none (pod stream) | a Kubernetes Service or pod |
 | `backend.TCP` / `portless alias` | you supply it | escape hatch: name an already-running address |
 
+For services you embed in the test process, `backend.ListenAndAdd` is the whole recipe in one call — bind `127.0.0.1:0`, register the listener, hand it to the service's start options:
+
+```go
+l, err := backend.ListenAndAdd(ctx, reg, "router")
+// pass l to your service; consumers needing a real URL use Route.Addr()
+```
+
+A `backend.Listener` route is dial-ready as soon as the socket is bound (kernel accept backlog), which can be earlier than the service behind it is serving — pair TLS servers with `RouteWithTLSHealth`.
+For components that insist on port ints instead of listeners, `backend.ReservePorts(n)` returns n distinct free ports by holding all n listeners open before closing any; two sequential listen-`:0`-close calls can return the same port.
+
+## Plain-URL consumers
+
+Some consumers cannot take a custom dialer or `*http.Client`: bare `http.Post` call sites, third-party SDKs, subprocesses, and URLs printed for humans to copy.
+`ListenLocal` gives them a real dialable address that still rides the route's readiness loop and self-healing:
+
+```go
+l, err := reg.ListenLocal("router")
+url := "http://" + l.Addr().String() // reaches the route; each connection dials fresh
+```
+
+Every accepted connection dials the backend independently, so a pod restart costs one retried dial instead of a dead tunnel.
+The listener is closed by `Close`; process-lifetime registries own it for the life of the process.
+
+## Transactional setup
+
+`AddReady` registers, waits for readiness, and removes the route again on failure, so retries of the same name never hit `ErrRouteExists`:
+
+```go
+rt, err := reg.AddReady(ctx, "controller", be)
+```
+
 ## Servers with DNS-rebinding protection
 
 Some servers reject requests that arrive on a loopback connection with a non-loopback `Host` — exactly what name-based dialing over a port-forward produces — and answer 403.
