@@ -49,6 +49,12 @@ func (rt *Route) Name() string { return rt.name }
 // Backend returns the route's backend.
 func (rt *Route) Backend() Backend { return rt.backend }
 
+// HostRewrite returns the Host header override configured with
+// RouteWithHostRewrite, if any.
+func (rt *Route) HostRewrite() (string, bool) {
+	return rt.cfg.hostRewrite, rt.cfg.hostRewrite != ""
+}
+
 // Ready dials the route once (blocking through the readiness loop) and
 // discards the connection. It reports nil when the backend accepts
 // connections. Used by status/doctor tooling and CI wait steps.

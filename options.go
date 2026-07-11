@@ -36,6 +36,7 @@ type routeConfig struct {
 	middleware   []Middleware
 	health       HealthCheck
 	portMap      map[int]int
+	hostRewrite  string
 }
 
 // WithFallback makes dials to unregistered names fall back to d instead of
@@ -134,6 +135,22 @@ func RouteWithHTTPHealth(port int, path string) RouteOption {
 		}
 		return nil
 	})
+}
+
+// RouteWithHostRewrite sets the Host header HTTP requests to this route carry
+// instead of the route name. Forwarded backends (port-forwards, SSH tunnels,
+// localhost relays) deliver traffic from a loopback local address, and many
+// servers treat "loopback peer + non-loopback Host" as a DNS-rebinding attack
+// and reject with 403 — RouteWithHostRewrite("127.0.0.1") makes such servers
+// see a loopback Host.
+//
+// The registry itself is L4 and never touches HTTP: the rewrite is applied by
+// DefaultClient/HTTPClient (and the CLI daemon's forward proxy). If you build
+// your own transport from Transport or DialContext, wrap it with
+// [Registry.WrapRoundTripper]. Raw TLS through CONNECT tunnels cannot be
+// rewritten.
+func RouteWithHostRewrite(host string) RouteOption {
+	return func(c *routeConfig) { c.hostRewrite = host }
 }
 
 // RouteWithPortMap maps requested ports to backend ports: a dial to

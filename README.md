@@ -54,6 +54,17 @@ Runnable examples and the full API are on [pkg.go.dev](https://pkg.go.dev/github
 | `k8s.PortForward` | none (pod stream) | a Kubernetes Service or pod |
 | `backend.TCP` / `portless alias` | you supply it | escape hatch: name an already-running address |
 
+## Servers with DNS-rebinding protection
+
+Some servers reject requests that arrive on a loopback connection with a non-loopback `Host` — exactly what name-based dialing over a port-forward produces — and answer 403.
+Register the route with a Host rewrite so the server sees a loopback name:
+
+```go
+reg.Add(ctx, "api", b, portless.RouteWithHostRewrite("127.0.0.1"))
+```
+
+See [writing-backends](docs/writing-backends.md#servers-with-dns-rebinding-protection) for the symptom and both fixes.
+
 ## HTTPS
 
 `portless serve --tls` terminates TLS so `https://<name>` verifies against a local CA:

@@ -16,8 +16,58 @@ type TransportOption func(*http.Transport)
 func (r *Registry) initHTTP() {
 	r.httpOnce.Do(func() {
 		r.defaultTransport = r.Transport()
-		r.defaultClient = &http.Client{Transport: r.defaultTransport}
+		r.defaultClient = &http.Client{Transport: r.WrapRoundTripper(r.defaultTransport)}
 	})
+}
+
+// HostRewrite reports the Host override for the route registered under name
+// (see RouteWithHostRewrite). The proxy package consults it through a small
+// optional interface, so a Registry-backed proxy applies rewrites too.
+func (r *Registry) HostRewrite(name string) (string, bool) {
+	rt, ok := r.Lookup(name)
+	if !ok {
+		return "", false
+	}
+	return rt.HostRewrite()
+}
+
+// WrapRoundTripper wraps next so requests to routes that declare a Host
+// rewrite (RouteWithHostRewrite) carry the rewritten Host header.
+// DefaultClient and HTTPClient are wrapped already; use this only when
+// building your own http.Transport over DialContext.
+func (r *Registry) WrapRoundTripper(next http.RoundTripper) http.RoundTripper {
+	return &hostRewriteRT{next: next, reg: r}
+}
+
+type hostRewriteRT struct {
+	next http.RoundTripper
+	reg  *Registry
+}
+
+func (h *hostRewriteRT) RoundTrip(req *http.Request) (*http.Response, error) {
+	name, port := req.URL.Host, ""
+	if hp, p, err := net.SplitHostPort(req.URL.Host); err == nil {
+		name, port = hp, p
+	}
+	rewrite, ok := h.reg.HostRewrite(name)
+	if !ok {
+		return h.next.RoundTrip(req)
+	}
+	if port != "" {
+		rewrite = net.JoinHostPort(rewrite, port)
+	}
+	// RoundTrippers must not mutate the caller's request.
+	out := req.Clone(req.Context())
+	out.Host = rewrite
+	return h.next.RoundTrip(out)
+}
+
+// CloseIdleConnections delegates to the wrapped transport, so
+// http.Client.CloseIdleConnections keeps working through the wrapper.
+func (h *hostRewriteRT) CloseIdleConnections() {
+	if c, ok := h.next.(interface{ CloseIdleConnections() }); ok {
+		c.CloseIdleConnections()
+	}
 }
 
 // DefaultTransport returns the registry's shared http.Transport, built once
@@ -59,7 +109,7 @@ func (r *Registry) Transport(opts ...TransportOption) *http.Transport {
 // Client.Timeout: readiness waits happen inside the dial and are bounded by
 // the route's ready timeout — use per-request contexts for request deadlines.
 func (r *Registry) HTTPClient(opts ...TransportOption) *http.Client {
-	return &http.Client{Transport: r.Transport(opts...)}
+	return &http.Client{Transport: r.WrapRoundTripper(r.Transport(opts...))}
 }
 
 // CloseIdleOnUnhealthy returns an event handler that drops t's pooled

@@ -2,9 +2,18 @@ package proxy
 
 import (
 	"io"
+	"net"
 	"net/http"
 	"strings"
 )
+
+// hostRewriter is the optional interface a dialer (typically
+// *portless.Registry) implements to declare per-route Host overrides.
+// CONNECT tunnels are opaque bytes and cannot be rewritten; only
+// absolute-form (and TLS-terminated) HTTP passes through here.
+type hostRewriter interface {
+	HostRewrite(name string) (string, bool)
+}
 
 // hopByHop headers are consumed by each proxy hop and must not be forwarded.
 var hopByHop = []string{
@@ -26,6 +35,7 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request) {
 	out.RequestURI = "" // client requests must not set it
 	out.Header = r.Header.Clone()
 	stripHopByHop(out.Header)
+	p.applyHostRewrite(out)
 
 	resp, err := p.transport.RoundTrip(out)
 	if err != nil {
@@ -43,6 +53,27 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body) //nolint:errcheck // client may hang up mid-body
+}
+
+// applyHostRewrite sets the outgoing Host header when the dialer declares a
+// rewrite for the target route (see portless.RouteWithHostRewrite).
+func (p *Proxy) applyHostRewrite(out *http.Request) {
+	hr, ok := p.dialer.(hostRewriter)
+	if !ok {
+		return
+	}
+	name, port := out.URL.Host, ""
+	if hp, pt, err := net.SplitHostPort(out.URL.Host); err == nil {
+		name, port = hp, pt
+	}
+	rewrite, ok := hr.HostRewrite(name)
+	if !ok {
+		return
+	}
+	if port != "" {
+		rewrite = net.JoinHostPort(rewrite, port)
+	}
+	out.Host = rewrite
 }
 
 func stripHopByHop(h http.Header) {
