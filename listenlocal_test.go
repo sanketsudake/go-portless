@@ -39,7 +39,7 @@ func startEchoOnce(t *testing.T) net.Listener {
 func TestListenLocalBridgesAndHalfCloses(t *testing.T) {
 	t.Parallel()
 	upstream := startEchoOnce(t)
-	reg := portless.New(portless.WithStrict())
+	reg := portless.New()
 	defer reg.Close()
 	if _, err := reg.Add(t.Context(), "svc", backend.Listener(upstream)); err != nil {
 		t.Fatal(err)
@@ -78,7 +78,7 @@ func TestListenLocalBridgesAndHalfCloses(t *testing.T) {
 
 func TestListenLocalUnknownRoute(t *testing.T) {
 	t.Parallel()
-	reg := portless.New(portless.WithStrict())
+	reg := portless.New()
 	defer reg.Close()
 	if _, err := reg.ListenLocal("nope"); !errors.Is(err, portless.ErrRouteNotFound) {
 		t.Fatalf("err = %v, want ErrRouteNotFound", err)
@@ -88,7 +88,7 @@ func TestListenLocalUnknownRoute(t *testing.T) {
 func TestListenLocalDialFailureSurfacesEvent(t *testing.T) {
 	t.Parallel()
 	events := make(chan portless.Event, 16)
-	reg := portless.New(portless.WithStrict(),
+	reg := portless.New(
 		portless.WithEventHandler(func(e portless.Event) {
 			select {
 			case events <- e:
@@ -135,7 +135,7 @@ func TestListenLocalDialFailureSurfacesEvent(t *testing.T) {
 func TestListenLocalFollowsRemoveAndReAdd(t *testing.T) {
 	t.Parallel()
 	upstream := startEchoOnce(t)
-	reg := portless.New(portless.WithStrict())
+	reg := portless.New()
 	defer reg.Close()
 	if _, err := reg.Add(t.Context(), "svc", backend.Listener(upstream)); err != nil {
 		t.Fatal(err)
@@ -189,7 +189,7 @@ func TestListenLocalFollowsRemoveAndReAdd(t *testing.T) {
 func TestListenLocalClosedByRegistryClose(t *testing.T) {
 	t.Parallel()
 	upstream := startEchoOnce(t)
-	reg := portless.New(portless.WithStrict())
+	reg := portless.New()
 	if _, err := reg.Add(t.Context(), "svc", backend.Listener(upstream)); err != nil {
 		t.Fatal(err)
 	}

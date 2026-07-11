@@ -486,7 +486,7 @@ func acceptEcho(l net.Listener) {
 
 func TestAddReadySuccess(t *testing.T) {
 	t.Parallel()
-	reg := portless.New(portless.WithStrict())
+	reg := portless.New()
 	defer reg.Close()
 	l := echoListener(t)
 
@@ -501,7 +501,7 @@ func TestAddReadySuccess(t *testing.T) {
 
 func TestAddReadyFailureFreesName(t *testing.T) {
 	t.Parallel()
-	reg := portless.New(portless.WithStrict())
+	reg := portless.New()
 	defer reg.Close()
 
 	_, err := reg.AddReady(t.Context(), "svc", &notReadyBackend{},
