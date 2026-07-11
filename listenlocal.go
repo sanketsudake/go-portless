@@ -139,7 +139,7 @@ func (r *Registry) bridgeAccept(l net.Listener, name string) {
 // bridgeConn pipes one accepted local connection to a fresh route dial,
 // resolving name at connection time so Remove/re-Add are honored.
 func (r *Registry) bridgeConn(conn net.Conn, name string) {
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// A dead backend must not surface as a silent connection reset.
 	warn := func(err error) {
@@ -165,7 +165,7 @@ func (r *Registry) bridgeConn(conn net.Conn, name string) {
 		warn(err) // dialRoute already emitted EventDialError
 		return
 	}
-	defer upstream.Close()
+	defer func() { _ = upstream.Close() }()
 
 	// Tear the pipe down when the registry closes, so bridged connections
 	// do not outlive Close.
