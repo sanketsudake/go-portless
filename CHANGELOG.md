@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (v0.3.0)
+## v0.3.0 — 2026-07-11
 
 Second adoption-feedback round: every item was field-proven in fission's CLI and e2e harness on v0.2.0 (fission/fission#3562 and the in-process e2e work).
 
