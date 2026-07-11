@@ -27,6 +27,9 @@ type Registry struct {
 	routes map[string]*Route
 	closed bool
 
+	// bridges are ListenLocal listeners, closed by Close.
+	bridges []net.Listener
+
 	// done is closed by Close; in-flight readiness waits observe it.
 	done      chan struct{}
 	closeOnce sync.Once
@@ -235,8 +238,14 @@ func (r *Registry) Close() error {
 		r.closed = true
 		routes := r.routes
 		r.routes = make(map[string]*Route)
+		bridges := r.bridges
+		r.bridges = nil
 		r.mu.Unlock()
 		close(r.done)
+
+		for _, l := range bridges {
+			_ = l.Close()
+		}
 
 		// Drop the shared pool's idle conns, if the pool was ever built.
 		r.httpMu.Lock()
