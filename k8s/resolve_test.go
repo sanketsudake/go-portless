@@ -248,3 +248,20 @@ func TestResolveServiceEmptyStringTargetPortDefaultsToPort(t *testing.T) {
 		t.Fatalf("containerPort = %d, want 8080 (service Port)", tgt.containerPort)
 	}
 }
+
+func TestResolveExplicitEmptyStringTargetPortStillErrors(t *testing.T) {
+	t.Parallel()
+	labels := map[string]string{"app": "web"}
+	client := fake.NewSimpleClientset(
+		readyPod("web-0", "default", labels, corev1.ContainerPort{ContainerPort: 8080}),
+	)
+	// An explicitly-set empty named port means unset, not `named port ""`.
+	r := &resolver{client: client, opts: options{
+		namespace: "default", selector: "app=web",
+		targetPort: intstr.FromString(""), hasTarget: true,
+	}}
+	if _, err := r.resolve(t.Context()); err == nil ||
+		!strings.Contains(err.Error(), "target port is unset") {
+		t.Fatalf("err = %v, want 'target port is unset'", err)
+	}
+}

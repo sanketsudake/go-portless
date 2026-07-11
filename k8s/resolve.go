@@ -141,13 +141,17 @@ func podReady(pod *corev1.Pod) bool {
 // never set by the caller (infer), the pod's single declared container port
 // is used, mirroring the Service single-port rule.
 func containerPort(pod *corev1.Pod, tp intstr.IntOrString, infer bool) (int, error) {
-	if tp.Type == intstr.Int {
-		if tp.IntValue() == 0 {
-			if infer {
-				return inferredContainerPort(pod)
-			}
-			return 0, fmt.Errorf("target port is unset for pod %q", pod.Name)
+	// Both the zero-Int and empty-String forms mean unset, mirroring the
+	// Service-path defaulting — an empty named port must not fall through to
+	// a confusing `named port "" not found` lookup.
+	if (tp.Type == intstr.Int && tp.IntValue() == 0) ||
+		(tp.Type == intstr.String && tp.StrVal == "") {
+		if infer {
+			return inferredContainerPort(pod)
 		}
+		return 0, fmt.Errorf("target port is unset for pod %q", pod.Name)
+	}
+	if tp.Type == intstr.Int {
 		return tp.IntValue(), nil
 	}
 	name := tp.StrVal

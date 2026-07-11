@@ -156,8 +156,16 @@ func (r *Registry) bridgeConn(conn net.Conn, name string) {
 		r.emit(Event{Type: EventDialError, Route: name, Err: err})
 		warn(err)
 	}
-	rt, ok := r.Lookup(name)
-	if !ok {
+	r.mu.RLock()
+	closed := r.closed
+	rt, ok := r.routes[strings.ToLower(name)]
+	r.mu.RUnlock()
+	if closed {
+		// Shutting down: the bridge is being torn down with the registry;
+		// drop the conn without a misleading route-not-found event.
+		return
+	}
+	if !ok || rt == nil {
 		fail(fmt.Errorf("portless: bridge %q: %w", name, ErrRouteNotFound))
 		return
 	}
