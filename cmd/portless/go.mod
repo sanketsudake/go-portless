@@ -3,8 +3,8 @@ module github.com/sanketsudake/go-portless/cmd/portless
 go 1.26.0
 
 require (
-	github.com/sanketsudake/go-portless v0.2.0
-	github.com/sanketsudake/go-portless/k8s v0.2.0
+	github.com/sanketsudake/go-portless v0.3.0
+	github.com/sanketsudake/go-portless/k8s v0.3.0
 	golang.org/x/term v0.45.0
 )
 
