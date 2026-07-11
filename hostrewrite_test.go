@@ -2,6 +2,7 @@ package portless_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -95,6 +96,63 @@ func TestHostRewritePreservesPort(t *testing.T) {
 	n, _ := resp.Body.Read(body[:])
 	if got := string(body[:n]); !strings.Contains(got, "127.0.0.1:8443") {
 		t.Fatalf("server saw Host %q, want the rewritten host with the original port", got)
+	}
+}
+
+func TestHostRewriteValidation(t *testing.T) {
+	r := portless.New()
+	defer r.Close()
+	l := echoListener(t)
+
+	bad := []string{
+		"127.0.0.1:8443", // port not allowed (request port is preserved)
+		"evil/../path",   // path bytes
+		"host\r\nX: y",   // header smuggling
+		"a b",            // space
+		"user@host",      // userinfo
+	}
+	for _, h := range bad {
+		if _, err := r.Add(context.Background(), "bad.test", backend.Listener(l),
+			portless.RouteWithHostRewrite(h)); err == nil {
+			t.Errorf("Add accepted invalid host rewrite %q", h)
+			_ = r.Remove(context.Background(), "bad.test")
+		}
+	}
+
+	for i, h := range []string{"127.0.0.1", "localhost", "::1", "my-host.internal"} {
+		name := fmt.Sprintf("good%d.test", i)
+		if _, err := r.Add(context.Background(), name, backend.Listener(l),
+			portless.RouteWithHostRewrite(h)); err != nil {
+			t.Errorf("Add rejected valid host rewrite %q: %v", h, err)
+		}
+	}
+}
+
+func TestHostRewriteRefusesNonNumericPort(t *testing.T) {
+	r := portless.New()
+	defer r.Close()
+	l := echoListener(t)
+	if _, err := r.Add(context.Background(), "pinned.test", backend.Listener(l),
+		portless.RouteWithHostRewrite("127.0.0.1")); err != nil {
+		t.Fatal(err)
+	}
+	// A proxy client controls the URL; SplitHostPort accepts non-numeric
+	// "ports", which must not be joined onto the pinned rewrite.
+	if got, ok := r.HostRewrite("pinned.test:evil.example"); ok {
+		t.Fatalf("HostRewrite joined attacker text onto the pinned host: %q", got)
+	}
+	if got, ok := r.HostRewrite("pinned.test:8443"); !ok || got != "127.0.0.1:8443" {
+		t.Fatalf("HostRewrite(numeric port) = %q, %v; want 127.0.0.1:8443, true", got, ok)
+	}
+}
+
+func TestStrictOptionStillOverridesFallback(t *testing.T) {
+	// v0.1 semantics: WithStrict wins over WithFallbackDialer in either
+	// order. A v0.2 upgrade must not silently open the fallback path.
+	r := portless.New(portless.WithStrict(), portless.WithFallbackDialer(nil))
+	defer r.Close()
+	if _, err := r.DialContext(context.Background(), "tcp", "unregistered.test:80"); !errors.Is(err, portless.ErrRouteNotFound) {
+		t.Fatalf("err = %v, want ErrRouteNotFound (WithStrict must override the fallback)", err)
 	}
 }
 

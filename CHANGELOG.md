@@ -12,8 +12,8 @@ Adoption-feedback release: every change below was surfaced by the first real ado
 - **Registries are strict by default.**
   `New()` now fails dials to unregistered names with `ErrRouteNotFound` instead of silently falling back to a real network dial.
   The fallback was most dangerous in the flagship scenario — route names that mirror resolvable DNS names, where a typo bypasses readiness and dials the real network.
-  **Migration:** pass `portless.WithFallback(nil)` to restore the old behavior (nil means a plain `net.Dialer`), or drop your `WithStrict()` calls (now a deprecated no-op).
-  `WithFallbackDialer` is deprecated and aliases `WithFallback`.
+  **Migration:** pass `portless.WithFallback(nil)` to restore the old behavior (nil means a plain `net.Dialer`), or drop your `WithStrict()` calls.
+  `WithFallbackDialer` is deprecated and aliases `WithFallback`; deprecated `WithStrict` still overrides any fallback option (v0.1 precedence), so code combining the two stays strict.
 
 ### Added
 

@@ -52,6 +52,9 @@ func New(opts ...Option) *Registry {
 	for _, o := range opts {
 		o(&cfg)
 	}
+	if cfg.forceStrict {
+		cfg.fallback = nil
+	}
 	return &Registry{
 		cfg:    cfg,
 		routes: make(map[string]*Route),
@@ -74,6 +77,9 @@ func (r *Registry) Add(ctx context.Context, name string, b Backend, opts ...Rout
 	rcfg := routeConfig{readyTimeout: r.cfg.readyTimeout}
 	for _, o := range opts {
 		o(&rcfg)
+	}
+	if err := validateHostRewrite(rcfg.hostRewrite); err != nil {
+		return nil, fmt.Errorf("portless: add %q: %w", name, err)
 	}
 	rt := &Route{name: name, backend: b, cfg: rcfg, registry: r}
 	rt.buildDial(r.cfg.middleware)

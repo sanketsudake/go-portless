@@ -25,7 +25,10 @@ type HealthCheck func(ctx context.Context, dial DialFunc) error
 type config struct {
 	// fallback dials addresses whose host matches no route; nil means strict
 	// (unknown names fail with ErrRouteNotFound).
-	fallback     ContextDialer
+	fallback ContextDialer
+	// forceStrict (deprecated WithStrict) overrides fallback regardless of
+	// option order, preserving v0.1's strict-wins semantics.
+	forceStrict  bool
 	readyTimeout time.Duration
 	logger       *slog.Logger
 	middleware   []Middleware
@@ -65,10 +68,11 @@ func WithFallbackDialer(d ContextDialer) Option {
 
 // WithStrict makes dials to unregistered names fail with ErrRouteNotFound.
 //
-// Deprecated: strict is the default since v0.2.0; this option is a no-op.
-// Use WithFallback to opt back in to fallback dials.
+// Deprecated: strict is the default since v0.2.0. It still overrides any
+// fallback option, in either order — v0.1 code combining it with
+// WithFallbackDialer stays strict rather than silently opening up.
 func WithStrict() Option {
-	return func(*config) {}
+	return func(c *config) { c.forceStrict = true }
 }
 
 // WithReadyTimeout caps how long a dial waits for a route's backend to become
@@ -169,6 +173,9 @@ func RouteWithTLSHealth(port int, cfg *tls.Config) RouteOption {
 // servers treat "loopback peer + non-loopback Host" as a DNS-rebinding attack
 // and reject with 403 — RouteWithHostRewrite("127.0.0.1") makes such servers
 // see a loopback Host.
+//
+// host must be a bare host — hostname, IPv4, or unbracketed IPv6 literal, no
+// port; Add rejects anything else. The request's own port is preserved.
 //
 // The registry itself is L4 and never touches HTTP: the rewrite is applied by
 // DefaultClient/HTTPClient (and the CLI daemon's forward proxy). If you build

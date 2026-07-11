@@ -1,6 +1,7 @@
 package portless
 
 import (
+	"fmt"
 	"net"
 	"net/http"
 	"strconv"
@@ -44,9 +45,44 @@ func (r *Registry) HostRewrite(urlHost string) (string, bool) {
 		return "", false
 	}
 	if port != "" {
+		// Through the forward proxy the URL is attacker-supplied and
+		// SplitHostPort does not require a numeric port — refuse to join
+		// arbitrary text onto the pinned rewrite.
+		if !allDigits(port) {
+			return "", false
+		}
 		rewrite = net.JoinHostPort(rewrite, port)
 	}
 	return rewrite, true
+}
+
+func allDigits(s string) bool {
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return s != ""
+}
+
+// validateHostRewrite enforces RouteWithHostRewrite's contract at Add time:
+// a bare host (hostname, IPv4, or unbracketed IPv6 literal) with no port and
+// no bytes that could smuggle structure into an outgoing Host header. The
+// request's port is preserved by HostRewrite via JoinHostPort, which also
+// brackets IPv6.
+func validateHostRewrite(h string) error {
+	if h == "" {
+		return nil // no rewrite configured
+	}
+	for _, c := range h {
+		if c <= ' ' || c == 0x7f || strings.ContainsRune("/?#@\\", c) {
+			return fmt.Errorf("host rewrite %q contains invalid host byte %q", h, c)
+		}
+	}
+	if strings.Contains(h, ":") && net.ParseIP(h) == nil {
+		return fmt.Errorf("host rewrite %q must be a bare host without a port (IPv6 literals unbracketed); the request's port is preserved automatically", h)
+	}
+	return nil
 }
 
 // WrapRoundTripper wraps next so requests to routes that declare a Host
