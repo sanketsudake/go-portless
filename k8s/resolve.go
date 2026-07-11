@@ -45,7 +45,7 @@ func (r *resolver) resolve(ctx context.Context) (target, error) {
 	case r.opts.service != "":
 		return r.resolveService(ctx)
 	default:
-		return r.resolveSelector(ctx, r.opts.selector, r.opts.targetPort)
+		return r.resolveSelector(ctx, r.opts.selector, r.opts.targetPort, !r.opts.hasTarget)
 	}
 }
 
@@ -60,7 +60,7 @@ func (r *resolver) resolvePod(ctx context.Context) (target, error) {
 	if !podReady(pod) {
 		return target{}, fmt.Errorf("pod %q not ready", pod.Name)
 	}
-	port, err := containerPort(pod, r.opts.targetPort)
+	port, err := containerPort(pod, r.opts.targetPort, !r.opts.hasTarget)
 	if err != nil {
 		return target{}, err
 	}
@@ -84,11 +84,15 @@ func (r *resolver) resolveService(ctx context.Context) (target, error) {
 			return target{}, fmt.Errorf("service %q has %d ports; specify TargetPort", svc.Name, len(svc.Spec.Ports))
 		}
 		tp = svc.Spec.Ports[0].TargetPort
+		// Kubernetes semantics: an unset targetPort defaults to the port.
+		if tp.Type == intstr.Int && tp.IntValue() == 0 {
+			tp = intstr.FromInt32(svc.Spec.Ports[0].Port)
+		}
 	}
-	return r.resolveSelector(ctx, metav1.FormatLabelSelector(&metav1.LabelSelector{MatchLabels: svc.Spec.Selector}), tp)
+	return r.resolveSelector(ctx, metav1.FormatLabelSelector(&metav1.LabelSelector{MatchLabels: svc.Spec.Selector}), tp, false)
 }
 
-func (r *resolver) resolveSelector(ctx context.Context, selector string, tp intstr.IntOrString) (target, error) {
+func (r *resolver) resolveSelector(ctx context.Context, selector string, tp intstr.IntOrString, infer bool) (target, error) {
 	if selector == "" {
 		return target{}, fmt.Errorf("empty label selector")
 	}
@@ -101,7 +105,7 @@ func (r *resolver) resolveSelector(ctx context.Context, selector string, tp ints
 		if !podReady(pod) {
 			continue
 		}
-		port, err := containerPort(pod, tp)
+		port, err := containerPort(pod, tp, infer)
 		if err != nil {
 			return target{}, err
 		}
@@ -127,11 +131,16 @@ func podReady(pod *corev1.Pod) bool {
 	return false
 }
 
-// containerPort resolves tp against pod: an integer port is used directly, a
-// named port is looked up among the pod's container ports.
-func containerPort(pod *corev1.Pod, tp intstr.IntOrString) (int, error) {
+// containerPort resolves tp against pod: an integer port is used directly
+// and a named port is looked up among the pod's container ports. When tp was
+// never set by the caller (infer), the pod's single declared container port
+// is used, mirroring the Service single-port rule.
+func containerPort(pod *corev1.Pod, tp intstr.IntOrString, infer bool) (int, error) {
 	if tp.Type == intstr.Int {
 		if tp.IntValue() == 0 {
+			if infer {
+				return inferredContainerPort(pod)
+			}
 			return 0, fmt.Errorf("target port is unset for pod %q", pod.Name)
 		}
 		return tp.IntValue(), nil
@@ -145,4 +154,19 @@ func containerPort(pod *corev1.Pod, tp intstr.IntOrString) (int, error) {
 		}
 	}
 	return 0, fmt.Errorf("named port %q not found in pod %q", name, pod.Name)
+}
+
+// inferredContainerPort applies the single-port rule to a pod's declared
+// container ports, for Pod/LabelSelector targets with no TargetPort option.
+func inferredContainerPort(pod *corev1.Pod) (int, error) {
+	var ports []int32
+	for _, c := range pod.Spec.Containers {
+		for _, p := range c.Ports {
+			ports = append(ports, p.ContainerPort)
+		}
+	}
+	if len(ports) == 1 {
+		return int(ports[0]), nil
+	}
+	return 0, fmt.Errorf("pod %q declares %d container ports; specify TargetPort", pod.Name, len(ports))
 }

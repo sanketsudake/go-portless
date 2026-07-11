@@ -2,6 +2,7 @@ package k8s
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -115,5 +116,89 @@ func TestResolveServiceMultiPortRequiresTarget(t *testing.T) {
 
 	if _, err := r.resolve(context.Background()); err == nil {
 		t.Fatal("multi-port service without TargetPort should error")
+	}
+}
+
+func TestResolveInfersSingleContainerPort(t *testing.T) {
+	labels := map[string]string{"app": "web"}
+	client := fake.NewSimpleClientset(
+		readyPod("web-0", "default", labels, corev1.ContainerPort{ContainerPort: 8080}),
+	)
+	// LabelSelector with NO TargetPort option: infer the pod's single port.
+	r := &resolver{client: client, opts: options{namespace: "default", selector: "app=web"}}
+
+	tgt, err := r.resolve(context.Background())
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if tgt.containerPort != 8080 {
+		t.Fatalf("containerPort = %d, want 8080", tgt.containerPort)
+	}
+}
+
+func TestResolveInferenceAmbiguousPorts(t *testing.T) {
+	labels := map[string]string{"app": "web"}
+	client := fake.NewSimpleClientset(
+		readyPod("web-0", "default", labels,
+			corev1.ContainerPort{ContainerPort: 8080},
+			corev1.ContainerPort{ContainerPort: 9090},
+		),
+	)
+	r := &resolver{client: client, opts: options{namespace: "default", selector: "app=web"}}
+
+	if _, err := r.resolve(context.Background()); err == nil ||
+		!strings.Contains(err.Error(), "specify TargetPort") {
+		t.Fatalf("err = %v, want 'specify TargetPort' guidance", err)
+	}
+}
+
+func TestResolveInferenceNoDeclaredPorts(t *testing.T) {
+	labels := map[string]string{"app": "web"}
+	client := fake.NewSimpleClientset(readyPod("web-0", "default", labels)) // no ports
+	r := &resolver{client: client, opts: options{namespace: "default", selector: "app=web"}}
+
+	if _, err := r.resolve(context.Background()); err == nil ||
+		!strings.Contains(err.Error(), "specify TargetPort") {
+		t.Fatalf("err = %v, want 'specify TargetPort' guidance", err)
+	}
+}
+
+func TestResolveExplicitZeroTargetPortStillErrors(t *testing.T) {
+	labels := map[string]string{"app": "web"}
+	client := fake.NewSimpleClientset(
+		readyPod("web-0", "default", labels, corev1.ContainerPort{ContainerPort: 8080}),
+	)
+	// hasTarget=true with a zero port: explicitly wrong, must NOT infer.
+	r := &resolver{client: client, opts: options{
+		namespace: "default", selector: "app=web",
+		targetPort: intstr.FromInt32(0), hasTarget: true,
+	}}
+	if _, err := r.resolve(context.Background()); err == nil ||
+		!strings.Contains(err.Error(), "target port is unset") {
+		t.Fatalf("err = %v, want 'target port is unset'", err)
+	}
+}
+
+func TestResolveServiceUnsetTargetPortDefaultsToPort(t *testing.T) {
+	labels := map[string]string{"app": "web"}
+	client := fake.NewSimpleClientset(
+		&corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: "default"},
+			Spec: corev1.ServiceSpec{
+				Selector: labels,
+				// No TargetPort: Kubernetes semantics default it to Port.
+				Ports: []corev1.ServicePort{{Port: 8080}},
+			},
+		},
+		readyPod("web-0", "default", labels, corev1.ContainerPort{ContainerPort: 8080}),
+	)
+	r := &resolver{client: client, opts: options{namespace: "default", service: "web"}}
+
+	tgt, err := r.resolve(context.Background())
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if tgt.containerPort != 8080 {
+		t.Fatalf("containerPort = %d, want 8080 (service Port)", tgt.containerPort)
 	}
 }
