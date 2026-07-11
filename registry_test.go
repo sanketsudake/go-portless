@@ -3,6 +3,7 @@ package portless_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"strings"
@@ -203,6 +204,34 @@ func TestDialReadyTimeout(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed < 100*time.Millisecond || elapsed > 2*time.Second {
 		t.Fatalf("timeout not respected: %v", elapsed)
+	}
+}
+
+// sentinelBackend always fails with a retryable error wrapping a sentinel, so
+// tests can prove the sentinel survives the readiness wait via errors.Is.
+type sentinelBackend struct{ sentinel error }
+
+func (b *sentinelBackend) DialContext(context.Context, string, string) (net.Conn, error) {
+	return nil, portless.Retryable(fmt.Errorf("resolving target: %w", b.sentinel))
+}
+
+func TestDialWaitErrorWrapsLastBackendError(t *testing.T) {
+	sentinel := errors.New("target not found")
+	r := portless.New()
+	defer r.Close()
+	if _, err := r.Add(context.Background(), "wrapped.test", &sentinelBackend{sentinel: sentinel},
+		portless.RouteWithReadyTimeout(50*time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	_, err := r.DialContext(context.Background(), "tcp", "wrapped.test:80")
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("errors.Is should reach the last backend error through the wait error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "not ready within") {
+		t.Fatalf("error should carry the ready-timeout cause, got: %v", err)
 	}
 }
 

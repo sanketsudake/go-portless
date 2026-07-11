@@ -269,11 +269,13 @@ func (r *Registry) dialRoute(ctx context.Context, rt *Route, network, address st
 }
 
 // dialWaitError builds the error for a readiness wait that ended before the
-// backend came up, naming the route and the last backend error.
+// backend came up, naming the route and the last backend error. Both the
+// context cause and the last backend error are wrapped, so callers can
+// errors.Is/As through to either (e.g. a typed not-found from a backend).
 func dialWaitError(name string, ctx context.Context, lastErr error) error {
 	cause := context.Cause(ctx)
 	if lastErr != nil {
-		return fmt.Errorf("portless: waiting for route %q: %w (last backend error: %s)", name, cause, lastErr.Error())
+		return fmt.Errorf("portless: waiting for route %q: %w (last backend error: %w)", name, cause, lastErr)
 	}
 	return fmt.Errorf("portless: waiting for route %q: %w", name, cause)
 }
