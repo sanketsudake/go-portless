@@ -49,7 +49,9 @@ func TestMiddlewareNotAppliedToFallback(t *testing.T) {
 	l := echoListener(t)
 	var mu sync.Mutex
 	var log []string
-	r := portless.New(portless.WithMiddleware(orderMW(&mu, &log, "registry")))
+	r := portless.New(
+		portless.WithFallback(nil),
+		portless.WithMiddleware(orderMW(&mu, &log, "registry")))
 	defer r.Close()
 	roundTrip(t, r, l.Addr().String()) // fallback dial, no route
 	mu.Lock()

@@ -5,9 +5,9 @@
 // Because readiness lives in the dial, a curl through this proxy blocks
 // until the backend is up instead of needing retry loops.
 //
-// Security: the proxy reaches whatever its dialer reaches. Front it with a
-// strict Registry (portless.WithStrict) so only registered routes are
-// reachable; a non-strict Registry falls back to real network dials, turning
+// Security: the proxy reaches whatever its dialer reaches. A default (strict)
+// Registry exposes only registered routes; a Registry built with
+// portless.WithFallback dials the real network for unknown names, turning
 // the proxy into an open forward proxy (an SSRF pivot for any local process).
 //
 // Note: CONNECT tunnels are passthrough — TLS clients see the backend's own

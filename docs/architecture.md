@@ -26,12 +26,12 @@ Resolution:
 1. Split `address` into host and port.
    The host is the route name.
 2. Look up the route by name (case-insensitive).
-3. On a miss: dial through the fallback dialer (a plain `net.Dialer` by default), or return `ErrRouteNotFound` if the registry is strict (`WithStrict`).
+3. On a miss: return `ErrRouteNotFound` (registries are strict by default), or dial through the fallback dialer if one was configured (`WithFallback`).
 4. On a hit: run the route's readiness loop.
 
 ```
 DialContext
-  └─ route lookup ──miss──▶ fallback dialer (or ErrRouteNotFound if strict)
+  └─ route lookup ──miss──▶ ErrRouteNotFound (or fallback dialer via WithFallback)
         │hit
         ▼
    readiness loop ──▶ middleware chain ──▶ port map ──▶ Backend.DialContext
@@ -99,7 +99,8 @@ The `proxy` package is a standard HTTP forward proxy over a `ContextDialer`, so 
   TLS is passthrough — the client sees the backend's own certificate, so this works for TLS backends but the cert will not match the route name unless the backend serves one for it.
 - **Absolute-form HTTP**: forwards through a registry-dialing transport with hop-by-hop headers stripped.
 
-The proxy reaches whatever its dialer reaches, so it must be fronted with a strict registry; the CLI daemon does this so only registered routes are reachable, never a fallback network dial.
+The proxy reaches whatever its dialer reaches; front it with a default (strict) registry so only registered routes are reachable, never a fallback network dial.
+Do not hand it a registry built with `WithFallback`.
 
 ## Control plane
 
@@ -138,7 +139,7 @@ The SPDY transport is hidden behind an internal interface so it can be swapped (
 go-portless targets developer machines and CI, not multi-tenant hosts.
 
 - The forward proxy and control socket bind to localhost / a same-user socket.
-- The proxy must front a strict registry; a non-strict registry behind it is an open forward proxy (an SSRF pivot for any local process).
-  The CLI daemon enforces strict.
+- The proxy must front a strict (default) registry; a registry with `WithFallback` behind it is an open forward proxy (an SSRF pivot for any local process).
+  The CLI daemon uses the strict default.
 - The control socket's security is filesystem permissions; the daemon creates it 0600 inside a 0700 directory.
 - No TLS CA, no `/etc/hosts` mutation, no root — all deliberately out of scope for v1.

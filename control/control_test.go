@@ -21,7 +21,7 @@ import (
 // socket and returns a client for it.
 func startServer(t *testing.T) (*portless.Registry, *control.Client) {
 	t.Helper()
-	reg := portless.New(portless.WithStrict(), portless.WithReadyTimeout(time.Second))
+	reg := portless.New(portless.WithReadyTimeout(time.Second))
 	t.Cleanup(func() { reg.Close() })
 
 	sock := filepath.Join(t.TempDir(), "portless.sock")

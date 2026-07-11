@@ -109,16 +109,16 @@ func TestDialRegisteredName(t *testing.T) {
 	roundTrip(t, r, "echo.test:80")
 }
 
-func TestDialUnknownNameFallsBack(t *testing.T) {
+func TestDialUnknownNameWithFallback(t *testing.T) {
 	l := echoListener(t)
-	r := portless.New()
+	r := portless.New(portless.WithFallback(nil)) // nil = plain net.Dialer
 	defer r.Close()
 	// no route registered; address is a real TCP addr → fallback net.Dialer
 	roundTrip(t, r, l.Addr().String())
 }
 
-func TestDialUnknownNameStrict(t *testing.T) {
-	r := portless.New(portless.WithStrict())
+func TestDialUnknownNameStrictByDefault(t *testing.T) {
+	r := portless.New()
 	defer r.Close()
 	_, err := r.DialContext(context.Background(), "tcp", "nope.test:80")
 	if !errors.Is(err, portless.ErrRouteNotFound) {

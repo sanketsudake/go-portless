@@ -78,7 +78,7 @@ func TestUnboundedDialUsesReadyTimeout(t *testing.T) {
 // the daemon uses) never dials unregistered hosts — closing the open-proxy
 // SSRF pivot.
 func TestStrictRegistryNeverDialsUnknown(t *testing.T) {
-	r := portless.New(portless.WithStrict())
+	r := portless.New()
 	defer r.Close()
 	// 203.0.113.1 is TEST-NET-3 (RFC 5737) — if strict mode leaked to the
 	// fallback dialer this would attempt a real connection.

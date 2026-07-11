@@ -22,8 +22,9 @@ type RouteOption func(*routeConfig)
 type HealthCheck func(ctx context.Context, dial DialFunc) error
 
 type config struct {
+	// fallback dials addresses whose host matches no route; nil means strict
+	// (unknown names fail with ErrRouteNotFound).
 	fallback     ContextDialer
-	strict       bool
 	readyTimeout time.Duration
 	logger       *slog.Logger
 	middleware   []Middleware
@@ -37,16 +38,35 @@ type routeConfig struct {
 	portMap      map[int]int
 }
 
-// WithFallbackDialer sets the dialer used for addresses whose host does not
-// match any registered route. Default: a plain net.Dialer.
-func WithFallbackDialer(d ContextDialer) Option {
-	return func(c *config) { c.fallback = d }
+// WithFallback makes dials to unregistered names fall back to d instead of
+// failing with ErrRouteNotFound. A nil d falls back to a plain net.Dialer.
+// The default (no fallback) is strict: a typo'd or unregistered name fails
+// loudly instead of silently dialing the real network — important when route
+// names mirror resolvable DNS names.
+func WithFallback(d ContextDialer) Option {
+	return func(c *config) {
+		if d == nil {
+			d = &net.Dialer{}
+		}
+		c.fallback = d
+	}
 }
 
-// WithStrict makes dials to unregistered names fail with ErrRouteNotFound
-// instead of falling back to a real network dial.
+// WithFallbackDialer sets the dialer used for addresses whose host does not
+// match any registered route.
+//
+// Deprecated: use WithFallback. Since v0.2.0 registries are strict by
+// default, so this option now also enables the fallback path.
+func WithFallbackDialer(d ContextDialer) Option {
+	return WithFallback(d)
+}
+
+// WithStrict makes dials to unregistered names fail with ErrRouteNotFound.
+//
+// Deprecated: strict is the default since v0.2.0; this option is a no-op.
+// Use WithFallback to opt back in to fallback dials.
 func WithStrict() Option {
-	return func(c *config) { c.strict = true }
+	return func(*config) {}
 }
 
 // WithReadyTimeout caps how long a dial waits for a route's backend to become

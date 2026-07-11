@@ -27,7 +27,7 @@ func TestMain(m *testing.M) {
 // uses it, plus the registry.
 func startProxy(t *testing.T) (*portless.Registry, *http.Client, string) {
 	t.Helper()
-	reg := portless.New(portless.WithStrict(), portless.WithReadyTimeout(2*time.Second))
+	reg := portless.New(portless.WithReadyTimeout(2 * time.Second))
 	t.Cleanup(func() { reg.Close() })
 
 	p := proxy.New(reg)

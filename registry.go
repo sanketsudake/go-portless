@@ -33,7 +33,6 @@ type Registry struct {
 // New creates a Registry.
 func New(opts ...Option) *Registry {
 	cfg := config{
-		fallback:     &net.Dialer{},
 		readyTimeout: defaultReadyTimeout,
 		logger:       slog.Default(),
 	}
@@ -183,8 +182,8 @@ func (r *Registry) Close() error {
 // DialContext dials address ("host:port"). If host matches a registered route
 // (case-insensitive), the route's backend handles the dial, retrying
 // Retryable errors with backoff until success, a non-retryable error, ctx
-// cancellation, or the route's ready timeout. Unknown hosts use the fallback
-// dialer, or fail with ErrRouteNotFound in strict mode.
+// cancellation, or the route's ready timeout. Unknown hosts fail with
+// ErrRouteNotFound unless a fallback dialer was configured (WithFallback).
 func (r *Registry) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	host := hostOf(address)
 
@@ -196,7 +195,7 @@ func (r *Registry) DialContext(ctx context.Context, network, address string) (ne
 		return nil, ErrClosed
 	}
 	if !ok || rt == nil {
-		if r.cfg.strict {
+		if r.cfg.fallback == nil {
 			return nil, fmt.Errorf("portless: dial %q: %w", address, ErrRouteNotFound)
 		}
 		return r.cfg.fallback.DialContext(ctx, network, address)

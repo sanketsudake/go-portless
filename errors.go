@@ -9,7 +9,8 @@ import (
 
 var (
 	// ErrRouteNotFound is returned when a dialed or looked-up name has no
-	// registered route (only in strict mode for dials; see WithStrict).
+	// registered route (for dials, unless a fallback dialer is configured;
+	// see WithFallback).
 	ErrRouteNotFound = errors.New("portless: route not found")
 
 	// ErrRouteExists is returned by Add when the name is already registered.
