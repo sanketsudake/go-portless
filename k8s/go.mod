@@ -1,6 +1,6 @@
 module github.com/sanketsudake/go-portless/k8s
 
-go 1.26.5
+go 1.26.0
 
 require (
 	github.com/sanketsudake/go-portless v0.1.0

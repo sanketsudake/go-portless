@@ -44,6 +44,20 @@ Runnable examples and the full API are on [pkg.go.dev](https://pkg.go.dev/github
 
 `Registry.DialContext` has the same shape as `net.Dialer.DialContext`, so HTTP, WebSockets, gRPC, and raw TCP all route through one path.
 
+WebSockets, both major libraries:
+
+```go
+// gorilla/websocket — inject the dialer:
+d := websocket.Dialer{NetDialContext: reg.DialContext}
+conn, _, err := d.Dial(portless.WSURL("web", 0, "/stream"), nil)
+
+// coder/websocket — no dialer hook; inject the HTTP client instead:
+conn, _, err := websocket.Dial(ctx, portless.WSURL("web", 0, "/stream"),
+    &websocket.DialOptions{HTTPClient: reg.DefaultClient()})
+```
+
+The coder/websocket path works because Go's HTTP/1.1 101-upgrade response bodies are writable through a custom transport.
+
 ## Backends
 
 | Backend | Port | Use for |

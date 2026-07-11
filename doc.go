@@ -28,7 +28,14 @@
 // grpc.WithContextDialer, and websocket.Dialer.NetDialContext.
 //
 // Backends implement the one-method Backend interface; optional capabilities
-// (Starter, Stopper) are detected by type assertion. Built-in backends live
-// in the backend subpackage; a Kubernetes port-forward backend lives in the
-// separate module github.com/sanketsudake/go-portless/k8s.
+// (Starter, Stopper, Addresser) are detected by type assertion. Built-in
+// backends live in the backend subpackage; a Kubernetes port-forward backend
+// lives in the separate module github.com/sanketsudake/go-portless/k8s.
+//
+// Process-lifetime registries (a test-framework singleton, a long-lived
+// daemon) legitimately never call Close — the OS reclaims everything at exit.
+// The clients built by DefaultClient/HTTPClient keep the registry reachable
+// through their DialContext, so once clients are built you don't even need to
+// keep the *Registry around. Call Close when routes' backends own resources
+// (k8s streams, Stopper backends) that should be released before exit.
 package portless

@@ -126,6 +126,55 @@ func TestDialUnknownNameStrictByDefault(t *testing.T) {
 	}
 }
 
+func TestRegistryReadyWaitsOnAllNamed(t *testing.T) {
+	r := portless.New()
+	defer r.Close()
+
+	l := echoListener(t)
+	f1, f2 := backend.Future(), backend.Future()
+	for name, b := range map[string]portless.Backend{"a.test": f1, "b.test": f2} {
+		if _, err := r.Add(context.Background(), name, b); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Set at different times: Ready must return only after the slowest.
+	go func() { time.Sleep(50 * time.Millisecond); f1.SetListener(l) }()
+	go func() { time.Sleep(150 * time.Millisecond); f2.SetListener(l) }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	start := time.Now()
+	if err := r.Ready(ctx, "a.test", "b.test"); err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(start) < 100*time.Millisecond {
+		t.Fatal("Ready returned before the slowest route was up")
+	}
+
+	// No names = all routes; both are up now.
+	if err := r.Ready(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := r.Ready(ctx, "missing.test"); !errors.Is(err, portless.ErrRouteNotFound) {
+		t.Fatalf("Ready on unknown name = %v, want ErrRouteNotFound", err)
+	}
+}
+
+func TestRegistryReadyJoinsFailures(t *testing.T) {
+	r := portless.New()
+	defer r.Close()
+	if _, err := r.Add(context.Background(), "never.test", backend.Future(),
+		portless.RouteWithReadyTimeout(100*time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	err := r.Ready(context.Background(), "never.test")
+	if err == nil || !strings.Contains(err.Error(), "never.test") {
+		t.Fatalf("Ready failure should name the route, got: %v", err)
+	}
+}
+
 func TestRouteAddr(t *testing.T) {
 	r := portless.New()
 	defer r.Close()

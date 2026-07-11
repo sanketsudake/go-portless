@@ -159,6 +159,37 @@ func (r *Registry) Routes() []*Route {
 	return out
 }
 
+// Ready waits until each named route accepts connections, dialing them
+// concurrently (all registered routes when no names are given). It is
+// doctor-as-a-function: the common bootstrap shape "block until my services
+// are up" in one call. Each wait is bounded by ctx and the route's ready
+// timeout; failures are joined with their route names.
+func (r *Registry) Ready(ctx context.Context, names ...string) error {
+	var routes []*Route
+	if len(names) == 0 {
+		routes = r.Routes()
+	} else {
+		for _, name := range names {
+			rt, ok := r.Lookup(name)
+			if !ok {
+				return fmt.Errorf("portless: ready %q: %w", name, ErrRouteNotFound)
+			}
+			routes = append(routes, rt)
+		}
+	}
+	errs := make([]error, len(routes))
+	var wg sync.WaitGroup
+	for i, rt := range routes {
+		wg.Go(func() {
+			if err := rt.Ready(ctx); err != nil {
+				errs[i] = fmt.Errorf("route %q: %w", rt.Name(), err)
+			}
+		})
+	}
+	wg.Wait()
+	return errors.Join(errs...)
+}
+
 // Close stops all backends and releases the registry. In-flight readiness
 // waits return ErrClosed. Close is idempotent.
 func (r *Registry) Close() error {

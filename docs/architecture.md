@@ -133,6 +133,9 @@ The SPDY transport is hidden behind an internal interface so it can be swapped (
 - Background goroutines are anchored to a registry/route/proxy lifetime and observed in the readiness backoff wait, so `Close` cancels in-flight dials.
   The proxy builds its `http.Server` at construction time so `Close` can always stop it, and its context watcher exits on `Close`.
 - Every package with goroutines runs its tests under goleak to catch leaks.
+- Process-lifetime registries (test-framework singletons, daemons) legitimately never call `Close` — the OS reclaims everything at exit.
+  Clients built by `DefaultClient`/`HTTPClient` keep the registry reachable through their `DialContext`, so the `*Registry` itself needn't be stored once clients exist.
+  Call `Close` when backends own resources (k8s streams, `Stopper` backends) that should be released before exit.
 
 ## Threat model
 
