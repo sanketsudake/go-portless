@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -43,8 +44,14 @@ import (
 // never call Close own the listener for the life of the process, which is
 // the intended shape for test-framework and CLI singletons.
 func (r *Registry) ListenLocal(name string) (net.Listener, error) {
-	rt, ok := r.Lookup(name)
-	if !ok {
+	r.mu.RLock()
+	closed := r.closed
+	rt, ok := r.routes[strings.ToLower(name)]
+	r.mu.RUnlock()
+	if closed {
+		return nil, ErrClosed
+	}
+	if !ok || rt == nil {
 		return nil, fmt.Errorf("portless: listen local %q: %w", name, ErrRouteNotFound)
 	}
 	if _, err := rt.bridgeDialPort(); err != nil {

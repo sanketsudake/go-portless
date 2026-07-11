@@ -220,3 +220,17 @@ func TestListenLocalRejectsMultiPortMap(t *testing.T) {
 		t.Fatal("ListenLocal should reject a multi-entry port map")
 	}
 }
+
+func TestListenLocalOnClosedRegistry(t *testing.T) {
+	t.Parallel()
+	upstream := startEchoOnce(t)
+	reg := portless.New()
+	if _, err := reg.Add(t.Context(), "svc", backend.Listener(upstream)); err != nil {
+		t.Fatal(err)
+	}
+	_ = reg.Close()
+	// Shutdown must be distinguishable from a missing route.
+	if _, err := reg.ListenLocal("svc"); !errors.Is(err, portless.ErrClosed) {
+		t.Fatalf("err = %v, want ErrClosed", err)
+	}
+}
