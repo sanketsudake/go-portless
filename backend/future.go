@@ -36,6 +36,17 @@ func (f *FutureBackend) Set(addr string) {
 // SetListener supplies the backend's address from a bound listener.
 func (f *FutureBackend) SetListener(l net.Listener) { f.Set(l.Addr().String()) }
 
+// Addr exposes the supplied address (portless.Addresser); nil until
+// Set/SetListener is called.
+func (f *FutureBackend) Addr() net.Addr {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	if f.addr == "" {
+		return nil
+	}
+	return tcpAddr(f.addr)
+}
+
 func (f *FutureBackend) DialContext(ctx context.Context, network, _ string) (net.Conn, error) {
 	f.mu.RLock()
 	addr := f.addr

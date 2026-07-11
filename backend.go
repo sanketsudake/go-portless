@@ -28,6 +28,16 @@ type Stopper interface {
 	Stop(ctx context.Context) error
 }
 
+// Addresser is an optional Backend capability: expose the concrete address
+// the backend dials. Backends with a fixed or already-resolved endpoint
+// (TCP, Listener, a set Future) implement it; backends without a dialable
+// local address (k8s port-forward) do not. A nil return means "no address
+// yet" (e.g. an unset Future). Mem reports a placeholder address on the
+// "mem" network, which is not dialable. See Route.Addr.
+type Addresser interface {
+	Addr() net.Addr
+}
+
 // ContextDialer is the consumer-facing dial abstraction. *Registry implements
 // it; the proxy, HTTP sugar, and third-party integrations depend on this
 // interface rather than on *Registry.

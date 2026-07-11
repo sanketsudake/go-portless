@@ -16,7 +16,7 @@ import (
 // TestStartCloseRaceDoesNotLeakServer verifies Close after Start with an
 // already-canceled context does not leave the proxy serving.
 func TestStartCloseRaceDoesNotLeakServer(t *testing.T) {
-	reg := portless.New(portless.WithStrict())
+	reg := portless.New()
 	defer reg.Close()
 
 	for range 50 {
@@ -67,7 +67,7 @@ func TestHopByHopCommaSeparated(t *testing.T) {
 
 func TestProxyClosesCleanly(t *testing.T) {
 	// goleak (TestMain) asserts no goroutine leak after this returns.
-	reg := portless.New(portless.WithStrict())
+	reg := portless.New()
 	defer reg.Close()
 	p := proxy.New(reg)
 	ctx, cancel := context.WithCancel(context.Background())

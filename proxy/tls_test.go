@@ -22,7 +22,7 @@ import (
 // TLS termination on, verifying the presented cert against the local CA. The
 // backend is plain HTTP; the proxy adds the TLS layer.
 func TestTLSTerminationVerifiesWithCA(t *testing.T) {
-	reg := portless.New(portless.WithStrict(), portless.WithReadyTimeout(2*time.Second))
+	reg := portless.New(portless.WithReadyTimeout(2 * time.Second))
 	t.Cleanup(func() { reg.Close() })
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

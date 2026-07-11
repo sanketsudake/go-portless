@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sanketsudake/go-portless/internal/backoff"
@@ -28,17 +30,32 @@ type Registry struct {
 	// done is closed by Close; in-flight readiness waits observe it.
 	done      chan struct{}
 	closeOnce sync.Once
+
+	// Shared HTTP plumbing, built lazily by DefaultTransport/DefaultClient
+	// under httpMu (a plain mutex, not sync.Once, so Close can observe
+	// "never built" without building).
+	httpMu           sync.Mutex
+	defaultTransport *http.Transport
+	defaultClient    *http.Client
+
+	// hasRewrites lets the per-request host-rewrite path no-op with one
+	// atomic load until a rewrite-declaring route is first registered (the
+	// common case is never). It is sticky: Remove does not clear it, so a
+	// registry that once had a rewrite keeps taking the lookup path.
+	hasRewrites atomic.Bool
 }
 
 // New creates a Registry.
 func New(opts ...Option) *Registry {
 	cfg := config{
-		fallback:     &net.Dialer{},
 		readyTimeout: defaultReadyTimeout,
 		logger:       slog.Default(),
 	}
 	for _, o := range opts {
 		o(&cfg)
+	}
+	if cfg.forceStrict {
+		cfg.fallback = nil
 	}
 	return &Registry{
 		cfg:    cfg,
@@ -63,8 +80,14 @@ func (r *Registry) Add(ctx context.Context, name string, b Backend, opts ...Rout
 	for _, o := range opts {
 		o(&rcfg)
 	}
+	if err := validateHostRewrite(rcfg.hostRewrite); err != nil {
+		return nil, fmt.Errorf("portless: add %q: %w", name, err)
+	}
 	rt := &Route{name: name, backend: b, cfg: rcfg, registry: r}
 	rt.buildDial(r.cfg.middleware)
+	if rcfg.hostRewrite != "" {
+		r.hasRewrites.Store(true)
+	}
 
 	r.mu.Lock()
 	if r.closed {
@@ -154,6 +177,37 @@ func (r *Registry) Routes() []*Route {
 	return out
 }
 
+// Ready waits until each named route accepts connections, dialing them
+// concurrently (all registered routes when no names are given). It is
+// doctor-as-a-function: the common bootstrap shape "block until my services
+// are up" in one call. Each wait is bounded by ctx and the route's ready
+// timeout; failures are joined with their route names.
+func (r *Registry) Ready(ctx context.Context, names ...string) error {
+	var routes []*Route
+	if len(names) == 0 {
+		routes = r.Routes()
+	} else {
+		for _, name := range names {
+			rt, ok := r.Lookup(name)
+			if !ok {
+				return fmt.Errorf("portless: ready %q: %w", name, ErrRouteNotFound)
+			}
+			routes = append(routes, rt)
+		}
+	}
+	errs := make([]error, len(routes))
+	var wg sync.WaitGroup
+	for i, rt := range routes {
+		wg.Go(func() {
+			if err := rt.Ready(ctx); err != nil {
+				errs[i] = fmt.Errorf("route %q: %w", rt.Name(), err)
+			}
+		})
+	}
+	wg.Wait()
+	return errors.Join(errs...)
+}
+
 // Close stops all backends and releases the registry. In-flight readiness
 // waits return ErrClosed. Close is idempotent.
 func (r *Registry) Close() error {
@@ -165,6 +219,13 @@ func (r *Registry) Close() error {
 		r.routes = make(map[string]*Route)
 		r.mu.Unlock()
 		close(r.done)
+
+		// Drop the shared pool's idle conns, if the pool was ever built.
+		r.httpMu.Lock()
+		if r.defaultTransport != nil {
+			r.defaultTransport.CloseIdleConnections()
+		}
+		r.httpMu.Unlock()
 
 		for _, rt := range routes {
 			if rt == nil {
@@ -183,8 +244,8 @@ func (r *Registry) Close() error {
 // DialContext dials address ("host:port"). If host matches a registered route
 // (case-insensitive), the route's backend handles the dial, retrying
 // Retryable errors with backoff until success, a non-retryable error, ctx
-// cancellation, or the route's ready timeout. Unknown hosts use the fallback
-// dialer, or fail with ErrRouteNotFound in strict mode.
+// cancellation, or the route's ready timeout. Unknown hosts fail with
+// ErrRouteNotFound unless a fallback dialer was configured (WithFallback).
 func (r *Registry) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	host := hostOf(address)
 
@@ -196,7 +257,7 @@ func (r *Registry) DialContext(ctx context.Context, network, address string) (ne
 		return nil, ErrClosed
 	}
 	if !ok || rt == nil {
-		if r.cfg.strict {
+		if r.cfg.fallback == nil {
 			return nil, fmt.Errorf("portless: dial %q: %w", address, ErrRouteNotFound)
 		}
 		return r.cfg.fallback.DialContext(ctx, network, address)
@@ -269,11 +330,13 @@ func (r *Registry) dialRoute(ctx context.Context, rt *Route, network, address st
 }
 
 // dialWaitError builds the error for a readiness wait that ended before the
-// backend came up, naming the route and the last backend error.
+// backend came up, naming the route and the last backend error. Both the
+// context cause and the last backend error are wrapped, so callers can
+// errors.Is/As through to either (e.g. a typed not-found from a backend).
 func dialWaitError(name string, ctx context.Context, lastErr error) error {
 	cause := context.Cause(ctx)
 	if lastErr != nil {
-		return fmt.Errorf("portless: waiting for route %q: %w (last backend error: %s)", name, cause, lastErr.Error())
+		return fmt.Errorf("portless: waiting for route %q: %w (last backend error: %w)", name, cause, lastErr)
 	}
 	return fmt.Errorf("portless: waiting for route %q: %w", name, cause)
 }

@@ -164,3 +164,18 @@ func Register() {
 
 `portless route add NAME` sends a `RouteSpec{Type: "mytype", Config: ...}`; the daemon looks up the factory and constructs the backend.
 This is how the k8s module adds the `"k8s"` type without the core importing client-go.
+
+## Servers with DNS-rebinding protection
+
+**Symptom:** a bare health endpoint answers fine, but the first real request through a forwarded backend returns `403 Forbidden` — often with a message about DNS rebinding (the MCP go-sdk's `StreamableHTTPHandler` is one such server).
+
+**Cause:** dialing by route name means requests carry the route name as `Host`, while forwarded traffic (SPDY port-forward, SSH tunnel, any localhost relay) reaches the server on a loopback local address.
+Servers with DNS-rebinding heuristics treat "loopback peer + non-loopback Host" as an attack and reject.
+
+**Fixes** (either side works):
+
+- Client-side: register the route with `portless.RouteWithHostRewrite("127.0.0.1")` so requests built by `DefaultClient`/`HTTPClient` (and the daemon's forward proxy) carry a loopback Host.
+  If you build your own transport over `Registry.DialContext`, wrap it with `Registry.WrapRoundTripper` to apply the rewrite.
+- Server-side: if you control the server, disable its localhost/DNS-rebinding protection for the forwarded listener (e.g. the MCP go-sdk's `DisableLocalhostProtection`).
+
+The rewrite is HTTP-layer only: raw TLS through CONNECT tunnels is opaque bytes and cannot be rewritten.

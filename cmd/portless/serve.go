@@ -50,9 +50,9 @@ func cmdServe(args []string, stdout, stderr io.Writer) error {
 // runServe runs the daemon until ctx is canceled. Split from cmdServe so
 // tests can drive it with their own context.
 func runServe(ctx context.Context, opts serveOptions, stdout, stderr io.Writer) int {
-	// Strict: the forward proxy must reach only registered routes, never fall
-	// back to real network dials (which would make it an open proxy).
-	reg := portless.New(portless.WithStrict())
+	// Default registries are strict: the forward proxy reaches only
+	// registered routes, never a real network dial (open-proxy risk).
+	reg := portless.New()
 	defer func() { _ = reg.Close() }()
 
 	proxyAddr := ""

@@ -44,6 +44,22 @@ Runnable examples and the full API are on [pkg.go.dev](https://pkg.go.dev/github
 
 `Registry.DialContext` has the same shape as `net.Dialer.DialContext`, so HTTP, WebSockets, gRPC, and raw TCP all route through one path.
 
+WebSockets, both major libraries — with gorilla/websocket, inject the dialer:
+
+```go
+d := websocket.Dialer{NetDialContext: reg.DialContext}
+conn, _, err := d.Dial(portless.WSURL("web", 0, "/stream"), nil)
+```
+
+coder/websocket has no dialer hook; inject the HTTP client instead:
+
+```go
+conn, _, err := websocket.Dial(ctx, portless.WSURL("web", 0, "/stream"),
+    &websocket.DialOptions{HTTPClient: reg.DefaultClient()})
+```
+
+The coder/websocket path works because Go's HTTP/1.1 101-upgrade response bodies are writable through a custom transport.
+
 ## Backends
 
 | Backend | Port | Use for |
@@ -53,6 +69,17 @@ Runnable examples and the full API are on [pkg.go.dev](https://pkg.go.dev/github
 | `backend.Mem` | none (`net.Pipe`) | serve HTTP with zero TCP sockets |
 | `k8s.PortForward` | none (pod stream) | a Kubernetes Service or pod |
 | `backend.TCP` / `portless alias` | you supply it | escape hatch: name an already-running address |
+
+## Servers with DNS-rebinding protection
+
+Some servers reject requests that arrive on a loopback connection with a non-loopback `Host` — exactly what name-based dialing over a port-forward produces — and answer 403.
+Register the route with a Host rewrite so the server sees a loopback name:
+
+```go
+reg.Add(ctx, "api", b, portless.RouteWithHostRewrite("127.0.0.1"))
+```
+
+See [writing-backends](docs/writing-backends.md#servers-with-dns-rebinding-protection) for the symptom and both fixes.
 
 ## HTTPS
 

@@ -20,10 +20,12 @@ type RouteSpec struct {
 	Config json.RawMessage `json:"config,omitempty"`
 }
 
-// RouteInfo describes a registered route in list responses.
+// RouteInfo describes a registered route in list responses. Addr is the
+// backend's concrete address when it exposes one (see portless.Addresser).
 type RouteInfo struct {
 	Name   string          `json:"name"`
 	Type   string          `json:"type"`
+	Addr   string          `json:"addr,omitempty"`
 	Config json.RawMessage `json:"config,omitempty"`
 }
 
@@ -76,6 +78,12 @@ func init() {
 		if c.Address == "" {
 			return nil, fmt.Errorf("tcp config: address is required")
 		}
-		return backend.TCP(c.Address), nil
+		// ParseTCP validates (rejects https://, paths, bad ports, unbracketed
+		// IPv6) so a bad address fails loudly at registration, not per dial.
+		b, err := backend.ParseTCP(c.Address)
+		if err != nil {
+			return nil, fmt.Errorf("tcp config: %w", err)
+		}
+		return b, nil
 	})
 }

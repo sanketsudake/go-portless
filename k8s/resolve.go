@@ -2,13 +2,28 @@ package k8s
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
 )
+
+// ErrTargetNotFound reports that the forwarding target does not exist at all:
+// the Service or pod is absent, or no pod matches the selector. It is still
+// delivered as a Retryable error — a target created later self-heals — but
+// callers with skip-fast semantics ("this optional subsystem isn't
+// installed") can detect it with errors.Is on the dial error instead of
+// burning the full ready timeout:
+//
+//	if errors.Is(err, k8s.ErrTargetNotFound) { t.Skip(...) }
+//
+// A target that exists but is not ready yet (pod warming up) is NOT
+// ErrTargetNotFound.
+var ErrTargetNotFound = errors.New("k8s: target not found")
 
 // target is a resolved forwarding destination.
 type target struct {
@@ -37,6 +52,9 @@ func (r *resolver) resolve(ctx context.Context) (target, error) {
 func (r *resolver) resolvePod(ctx context.Context) (target, error) {
 	pod, err := r.client.CoreV1().Pods(r.opts.namespace).Get(ctx, r.opts.pod, metav1.GetOptions{})
 	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return target{}, fmt.Errorf("%w: pod %s/%s: %w", ErrTargetNotFound, r.opts.namespace, r.opts.pod, err)
+		}
 		return target{}, err
 	}
 	if !podReady(pod) {
@@ -52,6 +70,9 @@ func (r *resolver) resolvePod(ctx context.Context) (target, error) {
 func (r *resolver) resolveService(ctx context.Context) (target, error) {
 	svc, err := r.client.CoreV1().Services(r.opts.namespace).Get(ctx, r.opts.service, metav1.GetOptions{})
 	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return target{}, fmt.Errorf("%w: service %s/%s: %w", ErrTargetNotFound, r.opts.namespace, r.opts.service, err)
+		}
 		return target{}, err
 	}
 	if len(svc.Spec.Selector) == 0 {
@@ -85,6 +106,10 @@ func (r *resolver) resolveSelector(ctx context.Context, selector string, tp ints
 			return target{}, err
 		}
 		return target{namespace: pod.Namespace, pod: pod.Name, containerPort: port}, nil
+	}
+	if len(pods.Items) == 0 {
+		// No pod matches at all: the target was never created (vs. warming).
+		return target{}, fmt.Errorf("%w: no pod matches selector %q in %q", ErrTargetNotFound, selector, r.opts.namespace)
 	}
 	return target{}, fmt.Errorf("no ready pod for selector %q in %q", selector, r.opts.namespace)
 }

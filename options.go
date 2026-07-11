@@ -2,6 +2,7 @@ package portless
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"net"
@@ -22,8 +23,12 @@ type RouteOption func(*routeConfig)
 type HealthCheck func(ctx context.Context, dial DialFunc) error
 
 type config struct {
-	fallback     ContextDialer
-	strict       bool
+	// fallback dials addresses whose host matches no route; nil means strict
+	// (unknown names fail with ErrRouteNotFound).
+	fallback ContextDialer
+	// forceStrict (deprecated WithStrict) overrides fallback regardless of
+	// option order, preserving v0.1's strict-wins semantics.
+	forceStrict  bool
 	readyTimeout time.Duration
 	logger       *slog.Logger
 	middleware   []Middleware
@@ -35,18 +40,39 @@ type routeConfig struct {
 	middleware   []Middleware
 	health       HealthCheck
 	portMap      map[int]int
+	hostRewrite  string
+}
+
+// WithFallback makes dials to unregistered names fall back to d instead of
+// failing with ErrRouteNotFound. A nil d falls back to a plain net.Dialer.
+// The default (no fallback) is strict: a typo'd or unregistered name fails
+// loudly instead of silently dialing the real network — important when route
+// names mirror resolvable DNS names.
+func WithFallback(d ContextDialer) Option {
+	return func(c *config) {
+		if d == nil {
+			d = &net.Dialer{}
+		}
+		c.fallback = d
+	}
 }
 
 // WithFallbackDialer sets the dialer used for addresses whose host does not
-// match any registered route. Default: a plain net.Dialer.
+// match any registered route.
+//
+// Deprecated: use WithFallback. Since v0.2.0 registries are strict by
+// default, so this option now also enables the fallback path.
 func WithFallbackDialer(d ContextDialer) Option {
-	return func(c *config) { c.fallback = d }
+	return WithFallback(d)
 }
 
-// WithStrict makes dials to unregistered names fail with ErrRouteNotFound
-// instead of falling back to a real network dial.
+// WithStrict makes dials to unregistered names fail with ErrRouteNotFound.
+//
+// Deprecated: strict is the default since v0.2.0. It still overrides any
+// fallback option, in either order — v0.1 code combining it with
+// WithFallbackDialer stays strict rather than silently opening up.
 func WithStrict() Option {
-	return func(c *config) { c.strict = true }
+	return func(c *config) { c.forceStrict = true }
 }
 
 // WithReadyTimeout caps how long a dial waits for a route's backend to become
@@ -114,6 +140,50 @@ func RouteWithHTTPHealth(port int, path string) RouteOption {
 		}
 		return nil
 	})
+}
+
+// RouteWithTLSHealth gates readiness on a TLS handshake succeeding on the
+// given backend port: "accepts TCP" and "able to serve TLS" genuinely differ
+// (bad cert material, TLS config regressions), so TLS routes should probe the
+// handshake, not the accept.
+//
+// A nil cfg defaults to InsecureSkipVerify — correct for a readiness probe,
+// which checks liveness of TLS serving, not peer identity; verification
+// against a not-yet-trusted test CA would keep the route not-ready forever.
+// Pass an explicit cfg to verify identity as part of readiness.
+func RouteWithTLSHealth(port int, cfg *tls.Config) RouteOption {
+	if cfg == nil {
+		cfg = &tls.Config{InsecureSkipVerify: true} // #nosec G402 -- liveness probe, not identity check (see doc comment)
+	}
+	return RouteWithHealthCheck(func(ctx context.Context, dial DialFunc) error {
+		conn, err := dial(ctx, "tcp", net.JoinHostPort("localhost", fmt.Sprint(port)))
+		if err != nil {
+			return err
+		}
+		defer func() { _ = conn.Close() }()
+		tc := tls.Client(conn, cfg)
+		defer func() { _ = tc.Close() }()
+		return tc.HandshakeContext(ctx)
+	})
+}
+
+// RouteWithHostRewrite sets the Host header HTTP requests to this route carry
+// instead of the route name. Forwarded backends (port-forwards, SSH tunnels,
+// localhost relays) deliver traffic from a loopback local address, and many
+// servers treat "loopback peer + non-loopback Host" as a DNS-rebinding attack
+// and reject with 403 — RouteWithHostRewrite("127.0.0.1") makes such servers
+// see a loopback Host.
+//
+// host must be a bare host — hostname, IPv4, or unbracketed IPv6 literal, no
+// port; Add rejects anything else. The request's own port is preserved.
+//
+// The registry itself is L4 and never touches HTTP: the rewrite is applied by
+// DefaultClient/HTTPClient (and the CLI daemon's forward proxy). If you build
+// your own transport from Transport or DialContext, wrap it with
+// [Registry.WrapRoundTripper]. Raw TLS through CONNECT tunnels cannot be
+// rewritten.
+func RouteWithHostRewrite(host string) RouteOption {
+	return func(c *routeConfig) { c.hostRewrite = host }
 }
 
 // RouteWithPortMap maps requested ports to backend ports: a dial to

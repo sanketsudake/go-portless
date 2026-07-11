@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
         with:
-          go-version-file: ${{ matrix.module }}/go.mod
+          go-version: stable
       - name: Test
         working-directory: ${{ matrix.module }}
         run: go test -race -count=2 ./...
@@ -35,7 +35,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
+          go-version: stable
       - name: Check non-test imports are stdlib-only
         run: |
           deps=$(go list -deps ./... | grep -v '^github.com/sanketsudake/go-portless' || true)
@@ -55,7 +55,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
         with:
-          go-version-file: ${{ matrix.module }}/go.mod
+          go-version: stable
       - uses: golangci/golangci-lint-action@v9
         with:
           version: latest
@@ -70,7 +70,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
         with:
-          go-version-file: ${{ matrix.module }}/go.mod
+          go-version: stable
       - name: govulncheck
         working-directory: ${{ matrix.module }}
         run: |
@@ -84,7 +84,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
         with:
-          go-version-file: k8s/go.mod
+          go-version: stable
       - uses: helm/kind-action@v1
         with:
           cluster_name: portless-e2e

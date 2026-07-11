@@ -26,9 +26,9 @@ func Example() {
 
 	reg.Add(context.Background(), "web", b)
 
-	client := reg.HTTPClient()
-	defer client.CloseIdleConnections()
-	resp, err := client.Get(portless.URL("web", 0, "/healthz"))
+	// DefaultClient is the registry's shared pooled client — safe to call
+	// from helpers and loops; reg.Close() drops its idle connections.
+	resp, err := reg.DefaultClient().Get(portless.URL("web", 0, "/healthz"))
 	if err != nil {
 		fmt.Println("error:", err)
 		return

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/sanketsudake/go-portless/backend"
 	"github.com/sanketsudake/go-portless/control"
 )
 
@@ -93,6 +94,10 @@ func routeAdd(args []string, stderr io.Writer) error {
 	spec := control.RouteSpec{Name: name}
 	switch {
 	case *tcp != "":
+		// Validate client-side for fast feedback; the daemon re-validates.
+		if _, err := backend.ParseTCP(*tcp); err != nil {
+			return err
+		}
 		cfg, err := json.Marshal(map[string]string{"address": *tcp})
 		if err != nil {
 			return err
@@ -151,9 +156,13 @@ func routeList(args []string, stdout, stderr io.Writer) error {
 		return enc.Encode(routes)
 	}
 	tw := tabwriter.NewWriter(stdout, 2, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tTYPE\tCONFIG")
+	fmt.Fprintln(tw, "NAME\tTYPE\tADDR\tCONFIG")
 	for _, rt := range routes {
-		fmt.Fprintf(tw, "%s\t%s\t%s\n", rt.Name, rt.Type, string(rt.Config))
+		addr := rt.Addr
+		if addr == "" {
+			addr = "-"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", rt.Name, rt.Type, addr, string(rt.Config))
 	}
 	return tw.Flush()
 }

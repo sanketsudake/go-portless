@@ -27,7 +27,7 @@ func TestMain(m *testing.M) {
 // uses it, plus the registry.
 func startProxy(t *testing.T) (*portless.Registry, *http.Client, string) {
 	t.Helper()
-	reg := portless.New(portless.WithStrict(), portless.WithReadyTimeout(2*time.Second))
+	reg := portless.New(portless.WithReadyTimeout(2 * time.Second))
 	t.Cleanup(func() { reg.Close() })
 
 	p := proxy.New(reg)
@@ -89,6 +89,51 @@ func TestConnectTunnelTLS(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	if string(body) != "secure" {
 		t.Fatalf("body = %q", body)
+	}
+}
+
+func TestAbsoluteFormAppliesHostRewrite(t *testing.T) {
+	reg, client, _ := startProxy(t)
+
+	// Guarded server: 403 unless Host is loopback (DNS-rebinding heuristic).
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := r.Host
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+		if host != "localhost" && host != "127.0.0.1" {
+			http.Error(w, "rebind guard", http.StatusForbidden)
+			return
+		}
+		fmt.Fprint(w, "rewritten")
+	}))
+	defer srv.Close()
+
+	if _, err := reg.Add(context.Background(), "guarded.test", backend.TCP(srv.Listener.Addr().String())); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reg.Add(context.Background(), "rewritten.test", backend.TCP(srv.Listener.Addr().String()),
+		portless.RouteWithHostRewrite("127.0.0.1")); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := client.Get("http://guarded.test/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("unrewritten: status = %d, want 403", resp.StatusCode)
+	}
+
+	resp, err = client.Get("http://rewritten.test/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK || string(body) != "rewritten" {
+		t.Fatalf("rewritten: status = %d body = %q, want 200 %q", resp.StatusCode, body, "rewritten")
 	}
 }
 

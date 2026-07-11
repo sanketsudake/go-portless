@@ -7,8 +7,10 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	portless "github.com/sanketsudake/go-portless"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/fake"
@@ -154,6 +156,78 @@ func TestBackendNotReadyPodIsRetryable(t *testing.T) {
 	}
 	if fd.callCount() != 0 {
 		t.Fatalf("dialer should not be called when no pod is ready, calls = %d", fd.callCount())
+	}
+}
+
+func TestMissingServiceIsTargetNotFoundThroughRegistry(t *testing.T) {
+	client := fake.NewSimpleClientset() // no Service, no pods
+	pf := &portForward{
+		res:    &resolver{client: client, opts: options{namespace: "fission", service: "router"}},
+		dialer: &fakeDialer{},
+	}
+	if err := pf.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pf.Stop(context.Background()) })
+
+	// Directly: the dial error is both retryable (late creation self-heals)
+	// and a typed not-found (skip-fast callers detect it in one round-trip).
+	_, err := pf.DialContext(context.Background(), "tcp", "router.fission:80")
+	if !portless.IsRetryable(err) {
+		t.Fatalf("missing-service dial err = %v, want retryable", err)
+	}
+	if !errors.Is(err, ErrTargetNotFound) {
+		t.Fatalf("missing-service dial err = %v, want ErrTargetNotFound", err)
+	}
+
+	// Through the registry: the readiness wait must preserve the sentinel
+	// (dialWaitError wraps the last backend error).
+	reg := portless.New()
+	defer reg.Close()
+	if _, err := reg.Add(context.Background(), "router.fission", pf,
+		portless.RouteWithReadyTimeout(200*time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	_, err = reg.DialContext(context.Background(), "tcp", "router.fission:80")
+	if !errors.Is(err, ErrTargetNotFound) {
+		t.Fatalf("registry dial err = %v, want errors.Is ErrTargetNotFound through the wait error", err)
+	}
+}
+
+func TestServiceCreatedMidWaitRecovers(t *testing.T) {
+	client := fake.NewSimpleClientset() // target appears later
+	pf := &portForward{
+		res:    &resolver{client: client, opts: options{namespace: "fission", selector: "app=router", targetPort: intstr.FromInt32(8888), hasTarget: true}},
+		dialer: &fakeDialer{},
+	}
+	if err := pf.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pf.Stop(context.Background()) })
+
+	reg := portless.New()
+	defer reg.Close()
+	if _, err := reg.Add(context.Background(), "router.fission", pf,
+		portless.RouteWithReadyTimeout(5*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		pod := readyPod("router-1", "fission", map[string]string{"app": "router"})
+		if _, err := client.CoreV1().Pods("fission").Create(context.Background(), pod, metav1.CreateOptions{}); err != nil {
+			t.Error(err)
+		}
+	}()
+
+	start := time.Now()
+	c, err := reg.DialContext(context.Background(), "tcp", "router.fission:80")
+	if err != nil {
+		t.Fatalf("dial should recover once the target exists: %v", err)
+	}
+	c.Close()
+	if time.Since(start) < 100*time.Millisecond {
+		t.Fatal("dial returned before the target was created")
 	}
 }
 

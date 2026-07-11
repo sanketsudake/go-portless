@@ -3,6 +3,7 @@ package portless_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"strings"
@@ -108,20 +109,115 @@ func TestDialRegisteredName(t *testing.T) {
 	roundTrip(t, r, "echo.test:80")
 }
 
-func TestDialUnknownNameFallsBack(t *testing.T) {
+func TestDialUnknownNameWithFallback(t *testing.T) {
 	l := echoListener(t)
-	r := portless.New()
+	r := portless.New(portless.WithFallback(nil)) // nil = plain net.Dialer
 	defer r.Close()
 	// no route registered; address is a real TCP addr → fallback net.Dialer
 	roundTrip(t, r, l.Addr().String())
 }
 
-func TestDialUnknownNameStrict(t *testing.T) {
-	r := portless.New(portless.WithStrict())
+func TestDialUnknownNameStrictByDefault(t *testing.T) {
+	r := portless.New()
 	defer r.Close()
 	_, err := r.DialContext(context.Background(), "tcp", "nope.test:80")
 	if !errors.Is(err, portless.ErrRouteNotFound) {
 		t.Fatalf("err = %v, want ErrRouteNotFound", err)
+	}
+}
+
+func TestRegistryReadyWaitsOnAllNamed(t *testing.T) {
+	r := portless.New()
+	defer r.Close()
+
+	l := echoListener(t)
+	f1, f2 := backend.Future(), backend.Future()
+	for name, b := range map[string]portless.Backend{"a.test": f1, "b.test": f2} {
+		if _, err := r.Add(context.Background(), name, b); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Set at different times: Ready must return only after the slowest.
+	go func() { time.Sleep(50 * time.Millisecond); f1.SetListener(l) }()
+	go func() { time.Sleep(150 * time.Millisecond); f2.SetListener(l) }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	start := time.Now()
+	if err := r.Ready(ctx, "a.test", "b.test"); err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(start) < 100*time.Millisecond {
+		t.Fatal("Ready returned before the slowest route was up")
+	}
+
+	// No names = all routes; both are up now.
+	if err := r.Ready(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := r.Ready(ctx, "missing.test"); !errors.Is(err, portless.ErrRouteNotFound) {
+		t.Fatalf("Ready on unknown name = %v, want ErrRouteNotFound", err)
+	}
+}
+
+func TestRegistryReadyJoinsFailures(t *testing.T) {
+	r := portless.New()
+	defer r.Close()
+	if _, err := r.Add(context.Background(), "never.test", backend.Future(),
+		portless.RouteWithReadyTimeout(100*time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	err := r.Ready(context.Background(), "never.test")
+	if err == nil || !strings.Contains(err.Error(), "never.test") {
+		t.Fatalf("Ready failure should name the route, got: %v", err)
+	}
+}
+
+func TestRouteAddr(t *testing.T) {
+	r := portless.New()
+	defer r.Close()
+
+	l := echoListener(t)
+	lisRoute, err := r.Add(context.Background(), "lis.test", backend.Listener(l))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if addr, ok := lisRoute.Addr(); !ok || addr.String() != l.Addr().String() {
+		t.Fatalf("listener route Addr = %v, %v; want %v, true", addr, ok, l.Addr())
+	}
+
+	tcpRoute, err := r.Add(context.Background(), "tcp.test", backend.TCP("example.com:9000"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if addr, ok := tcpRoute.Addr(); !ok || addr.String() != "example.com:9000" || addr.Network() != "tcp" {
+		t.Fatalf("tcp route Addr = %v, %v; want example.com:9000, true", addr, ok)
+	}
+
+	f := backend.Future()
+	futRoute, err := r.Add(context.Background(), "fut.test", f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if addr, ok := futRoute.Addr(); ok {
+		t.Fatalf("unset future route Addr = %v, want ok=false", addr)
+	}
+	f.SetListener(l)
+	if addr, ok := futRoute.Addr(); !ok || addr.String() != l.Addr().String() {
+		t.Fatalf("set future route Addr = %v, %v; want %v, true", addr, ok, l.Addr())
+	}
+
+	mb, _ := backend.Mem()
+	memRoute, err := r.Add(context.Background(), "mem.test", mb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Mem is its own net.Listener, so it reports its placeholder address on
+	// the non-dialable "mem" network.
+	if addr, ok := memRoute.Addr(); !ok || addr.Network() != "mem" {
+		t.Fatalf("mem route Addr = %v, %v; want a mem-network placeholder", addr, ok)
 	}
 }
 
@@ -203,6 +299,34 @@ func TestDialReadyTimeout(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed < 100*time.Millisecond || elapsed > 2*time.Second {
 		t.Fatalf("timeout not respected: %v", elapsed)
+	}
+}
+
+// sentinelBackend always fails with a retryable error wrapping a sentinel, so
+// tests can prove the sentinel survives the readiness wait via errors.Is.
+type sentinelBackend struct{ sentinel error }
+
+func (b *sentinelBackend) DialContext(context.Context, string, string) (net.Conn, error) {
+	return nil, portless.Retryable(fmt.Errorf("resolving target: %w", b.sentinel))
+}
+
+func TestDialWaitErrorWrapsLastBackendError(t *testing.T) {
+	sentinel := errors.New("target not found")
+	r := portless.New()
+	defer r.Close()
+	if _, err := r.Add(context.Background(), "wrapped.test", &sentinelBackend{sentinel: sentinel},
+		portless.RouteWithReadyTimeout(50*time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	_, err := r.DialContext(context.Background(), "tcp", "wrapped.test:80")
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("errors.Is should reach the last backend error through the wait error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "not ready within") {
+		t.Fatalf("error should carry the ready-timeout cause, got: %v", err)
 	}
 }
 

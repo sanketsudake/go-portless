@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"reflect"
 	"strconv"
 )
 
@@ -48,6 +49,42 @@ func (rt *Route) Name() string { return rt.name }
 
 // Backend returns the route's backend.
 func (rt *Route) Backend() Backend { return rt.backend }
+
+// HostRewrite returns the Host header override configured with
+// RouteWithHostRewrite, if any.
+func (rt *Route) HostRewrite() (string, bool) {
+	return rt.cfg.hostRewrite, rt.cfg.hostRewrite != ""
+}
+
+// Addr returns the concrete address the route's backend dials, when the
+// backend exposes one (see Addresser). It lets registry-external consumers —
+// env vars handed to subprocesses, plain clients outside the registry — be
+// pointed at the real address without keeping a parallel name→addr map.
+// ok is false when the backend has no address (yet).
+func (rt *Route) Addr() (net.Addr, bool) {
+	a, ok := rt.backend.(Addresser)
+	if !ok {
+		return nil, false
+	}
+	addr := a.Addr()
+	if addr == nil || isTypedNil(addr) {
+		return nil, false
+	}
+	return addr, true
+}
+
+// isTypedNil catches Addresser implementations that return a nil pointer
+// inside a non-nil net.Addr interface value — without this, ok would be true
+// and addr.String() would panic in callers like the control server.
+func isTypedNil(addr net.Addr) bool {
+	v := reflect.ValueOf(addr)
+	switch v.Kind() {
+	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Chan, reflect.Func, reflect.Interface:
+		return v.IsNil()
+	default:
+		return false
+	}
+}
 
 // Ready dials the route once (blocking through the readiness loop) and
 // discards the connection. It reports nil when the backend accepts
