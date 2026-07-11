@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased (v0.3.0)
+
+Second adoption-feedback round: every item was field-proven in fission's CLI and e2e harness on v0.2.0 (fission/fission#3562 and the in-process e2e work).
+
+### Added
+
+- `Registry.ListenLocal(name)` — loopback TCP bridge for consumers that cannot take a custom dialer (bare HTTP call sites, SDKs, subprocesses, printed URLs).
+  Correct bidirectional half-close (connection-close-delimited responses no longer hang); per-connection dial failures surface as `EventDialError` plus a Warn log; the route name is resolved per connection so `Remove`/re-`Add` are honored; listeners are closed by `Close`.
+- `Registry.AddReady(ctx, name, backend, opts...)` — transactional register-and-wait; removes the route on readiness failure so the name is immediately reusable instead of poisoned with `ErrRouteExists`.
+- `backend.ListenAndAdd(ctx, reg, name, opts...)` — the embedded-service recipe (bind `127.0.0.1:0`, register, return the listener) as a one-liner.
+- `backend.ReservePorts(n)` — n distinct free TCP ports, reserved atomically by holding all n listeners open before closing any.
+- k8s: `TargetPort` is now optional with `Pod`/`LabelSelector` when the resolved pod declares exactly one container port (mirrors the `Service` single-port rule); an explicitly-set zero port still errors.
+- k8s: a `Service` whose single port has no explicit `targetPort` now defaults to the port value (Kubernetes semantics) instead of erroring `target port is unset`.
+
+### Docs
+
+- `backend.Listener`: documented accept-backlog readiness (dial-ready at bind, before the service serves; pair TLS servers with `RouteWithTLSHealth`).
+- `k8s.LabelSelector`: documented first-ready-pod-wins within a namespace.
+
 ## v0.2.0 — 2026-07-11
 
 Adoption-feedback release: every change below was surfaced by the first real adoption of v0.1.0 in an OSS project's test harnesses and CI.

@@ -40,7 +40,9 @@ func Service(namespace, name string) Option {
 	return func(o *options) { o.namespace, o.service = namespace, name }
 }
 
-// LabelSelector resolves a ready pod matching selector (e.g. "app=router").
+// LabelSelector resolves a ready pod matching selector (e.g. "app=router")
+// within namespace. When several pods match, the FIRST ready one wins —
+// there is no ambiguity error within a namespace.
 func LabelSelector(namespace, selector string) Option {
 	return func(o *options) { o.namespace, o.selector = namespace, selector }
 }
@@ -51,8 +53,13 @@ func Pod(namespace, name string) Option {
 }
 
 // TargetPort sets the pod container port to forward to. It may be a number
-// or a named port ("http"). Required with LabelSelector/Pod; optional with
-// Service (defaults to the Service's single target port).
+// or a named port ("http"). Optional in all modes when a single port can be
+// inferred: Service uses its one declared port; Pod/LabelSelector use the
+// resolved pod's one declared container port (native sidecars included).
+// Required when the target declares zero or several ports. Container port
+// declarations are informational in Kubernetes — for pods whose sidecar
+// declares a port (e.g. an injected proxy's metrics port), set TargetPort
+// explicitly rather than relying on inference.
 func TargetPort(p intstr.IntOrString) Option {
 	return func(o *options) { o.targetPort, o.hasTarget = p, true }
 }

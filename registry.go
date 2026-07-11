@@ -17,6 +17,10 @@ import (
 
 const defaultReadyTimeout = 60 * time.Second
 
+// addReadyCleanupTimeout bounds the backend Stop that AddReady runs after a
+// failed readiness wait.
+const addReadyCleanupTimeout = 10 * time.Second
+
 // Registry maps names to backends and implements ContextDialer: dialing
 // "name:port" resolves through the named route, blocking until the backend
 // is ready (bounded by ctx and the route's ready timeout).
@@ -26,6 +30,9 @@ type Registry struct {
 	mu     sync.RWMutex
 	routes map[string]*Route
 	closed bool
+
+	// bridges are ListenLocal listeners, closed by Close.
+	bridges bridgeSet
 
 	// done is closed by Close; in-flight readiness waits observe it.
 	done      chan struct{}
@@ -136,6 +143,33 @@ func (r *Registry) Add(ctx context.Context, name string, b Backend, opts ...Rout
 	return rt, nil
 }
 
+// AddReady registers name with backend b and blocks until the route accepts
+// connections (bounded by ctx and the route's ready timeout). If readiness
+// fails, the route is removed again, so the name is immediately reusable —
+// transactional setup for callers whose bootstrap is "register, wait, then
+// bind dependent resources", without a Remove on every error path.
+func (r *Registry) AddReady(ctx context.Context, name string, b Backend, opts ...RouteOption) (*Route, error) {
+	rt, err := r.Add(ctx, name, b, opts...)
+	if err != nil {
+		return nil, err
+	}
+	if err := rt.Ready(ctx); err != nil {
+		// ctx may already be expired; cleanup must still run, but bounded so
+		// a blocking Stopper cannot wedge AddReady forever.
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), addReadyCleanupTimeout)
+		defer cancel()
+		// A concurrent Remove/Close already freeing the name is the goal,
+		// not a cleanup failure — don't warn about it.
+		if rerr := r.Remove(cleanupCtx, name); rerr != nil && !errors.Is(rerr, ErrRouteNotFound) {
+			r.cfg.logger.Warn("portless: add ready: cleanup remove failed",
+				"route", name, "err", rerr)
+		}
+		// Ready errors already name the route and carry the portless prefix.
+		return nil, err
+	}
+	return rt, nil
+}
+
 // Remove unregisters name. If the backend implements Stopper, Stop is called
 // with ctx.
 func (r *Registry) Remove(ctx context.Context, name string) error {
@@ -219,6 +253,7 @@ func (r *Registry) Close() error {
 		r.routes = make(map[string]*Route)
 		r.mu.Unlock()
 		close(r.done)
+		r.bridges.closeAll()
 
 		// Drop the shared pool's idle conns, if the pool was ever built.
 		r.httpMu.Lock()

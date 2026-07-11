@@ -23,18 +23,7 @@ func echoListener(t *testing.T) net.Listener {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { l.Close() })
-	go func() {
-		for {
-			c, err := l.Accept()
-			if err != nil {
-				return
-			}
-			go func(c net.Conn) {
-				defer c.Close()
-				io.Copy(c, c)
-			}(c)
-		}
-	}()
+	go acceptEcho(l)
 	return l
 }
 
@@ -481,5 +470,36 @@ func acceptEcho(l net.Listener) {
 			defer c.Close()
 			io.Copy(c, c)
 		}(c)
+	}
+}
+
+func TestAddReadySuccess(t *testing.T) {
+	t.Parallel()
+	reg := portless.New()
+	defer reg.Close()
+	l := echoListener(t)
+
+	rt, err := reg.AddReady(t.Context(), "svc", backend.Listener(l))
+	if err != nil {
+		t.Fatalf("AddReady: %v", err)
+	}
+	if rt.Name() != "svc" {
+		t.Fatalf("route name = %q, want %q", rt.Name(), "svc")
+	}
+}
+
+func TestAddReadyFailureFreesName(t *testing.T) {
+	t.Parallel()
+	reg := portless.New()
+	defer reg.Close()
+
+	_, err := reg.AddReady(t.Context(), "svc", &notReadyBackend{},
+		portless.RouteWithReadyTimeout(50*time.Millisecond))
+	if err == nil {
+		t.Fatal("AddReady should fail for a never-ready backend")
+	}
+	// The name must be free again: a retry Add must NOT get ErrRouteExists.
+	if _, err := reg.Add(t.Context(), "svc", &notReadyBackend{}); err != nil {
+		t.Fatalf("re-Add after failed AddReady: %v (name poisoned)", err)
 	}
 }

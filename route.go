@@ -86,12 +86,31 @@ func isTypedNil(addr net.Addr) bool {
 	}
 }
 
+// bridgeDialPort picks the requested port a local bridge dials for the
+// route: 0 when there is no port map, the single mapped port when the map
+// has one entry, and an error when the map is ambiguous — a bridge exposes
+// one local address, so it cannot know which of several mapped ports the
+// consumer wants. Ready has a looser rule (any mapped port suffices for a
+// readiness probe) and picks arbitrarily instead.
+func (rt *Route) bridgeDialPort() (int, error) {
+	switch len(rt.cfg.portMap) {
+	case 0:
+		return 0, nil
+	case 1:
+		for p := range rt.cfg.portMap {
+			return p, nil
+		}
+	}
+	return 0, fmt.Errorf("route has %d mapped ports; bridge one route per port", len(rt.cfg.portMap))
+}
+
 // Ready dials the route once (blocking through the readiness loop) and
 // discards the connection. It reports nil when the backend accepts
 // connections. Used by status/doctor tooling and CI wait steps.
 func (rt *Route) Ready(ctx context.Context) error {
 	// Dial a port the route accepts: a mapped requested port if the route
-	// has a port map (":0" would never match one), else 0.
+	// has a port map (":0" would never match one), else 0. Unlike a bridge
+	// (see bridgeDialPort), any mapped port works for a readiness probe.
 	port := 0
 	for reqPort := range rt.cfg.portMap {
 		port = reqPort
