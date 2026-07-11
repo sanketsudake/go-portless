@@ -16,6 +16,10 @@ import (
 // take port ints and bind promptly; components that accept a net.Listener
 // should be handed one directly (see Listener / ListenAndAdd), which has no
 // race at all.
+//
+// The reservation binds the wildcard address deliberately: a port reserved
+// on all interfaces is guaranteed free for a component that later binds any
+// specific one. The listeners never accept and close before returning.
 func ReservePorts(n int) ([]int, error) {
 	if n <= 0 {
 		return nil, fmt.Errorf("backend: reserve ports: n must be positive, got %d", n)
