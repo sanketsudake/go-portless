@@ -6,6 +6,9 @@ Adoption-feedback release: every change below was surfaced by the first real ado
 
 ### Breaking
 
+- **`HTTPClient()`'s (and `DefaultClient()`'s) `Transport` is no longer a bare `*http.Transport`** — it is wrapped for per-route Host rewriting, so `client.Transport.(*http.Transport)` assertions now fail.
+  Configure the transport via `Transport(opts...)` / `TransportOption` instead, or wrap your own transport with `Registry.WrapRoundTripper`.
+  `client.CloseIdleConnections()` still works through the wrapper.
 - **Registries are strict by default.**
   `New()` now fails dials to unregistered names with `ErrRouteNotFound` instead of silently falling back to a real network dial.
   The fallback was most dangerous in the flagship scenario — route names that mirror resolvable DNS names, where a typo bypasses readiness and dials the real network.

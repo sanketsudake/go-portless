@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"reflect"
 	"strconv"
 )
 
@@ -66,7 +67,23 @@ func (rt *Route) Addr() (net.Addr, bool) {
 		return nil, false
 	}
 	addr := a.Addr()
-	return addr, addr != nil
+	if addr == nil || isTypedNil(addr) {
+		return nil, false
+	}
+	return addr, true
+}
+
+// isTypedNil catches Addresser implementations that return a nil pointer
+// inside a non-nil net.Addr interface value — without this, ok would be true
+// and addr.String() would panic in callers like the control server.
+func isTypedNil(addr net.Addr) bool {
+	v := reflect.ValueOf(addr)
+	switch v.Kind() {
+	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Chan, reflect.Func, reflect.Interface:
+		return v.IsNil()
+	default:
+		return false
+	}
 }
 
 // Ready dials the route once (blocking through the readiness loop) and

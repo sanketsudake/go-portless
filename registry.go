@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sanketsudake/go-portless/internal/backoff"
@@ -30,10 +31,16 @@ type Registry struct {
 	done      chan struct{}
 	closeOnce sync.Once
 
-	// Shared HTTP plumbing, built lazily by DefaultTransport/DefaultClient.
-	httpOnce         sync.Once
+	// Shared HTTP plumbing, built lazily by DefaultTransport/DefaultClient
+	// under httpMu (a plain mutex, not sync.Once, so Close can observe
+	// "never built" without building).
+	httpMu           sync.Mutex
 	defaultTransport *http.Transport
 	defaultClient    *http.Client
+
+	// hasRewrites lets the per-request host-rewrite path no-op with one
+	// atomic load when no route declares a rewrite (the common case).
+	hasRewrites atomic.Bool
 }
 
 // New creates a Registry.
@@ -70,6 +77,9 @@ func (r *Registry) Add(ctx context.Context, name string, b Backend, opts ...Rout
 	}
 	rt := &Route{name: name, backend: b, cfg: rcfg, registry: r}
 	rt.buildDial(r.cfg.middleware)
+	if rcfg.hostRewrite != "" {
+		r.hasRewrites.Store(true)
+	}
 
 	r.mu.Lock()
 	if r.closed {
@@ -202,10 +212,12 @@ func (r *Registry) Close() error {
 		r.mu.Unlock()
 		close(r.done)
 
-		// Drop the shared pool's idle conns (initHTTP is race-safe and cheap
-		// if nothing was ever built: an unused Transport owns no goroutines).
-		r.initHTTP()
-		r.defaultTransport.CloseIdleConnections()
+		// Drop the shared pool's idle conns, if the pool was ever built.
+		r.httpMu.Lock()
+		if r.defaultTransport != nil {
+			r.defaultTransport.CloseIdleConnections()
+		}
+		r.httpMu.Unlock()
 
 		for _, rt := range routes {
 			if rt == nil {

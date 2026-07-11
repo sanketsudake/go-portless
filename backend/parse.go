@@ -65,7 +65,9 @@ func ParseTCP(s string) (portless.Backend, error) {
 		host = strings.Trim(host, "[]")
 	}
 	if host == "" {
-		return nil, fmt.Errorf("backend: parse tcp %q: empty host", s)
+		// ":8080" usually means an unset variable ("$HOST:8080"); require the
+		// host to be explicit rather than silently dialing the local system.
+		return nil, fmt.Errorf("backend: parse tcp %q: empty host (write 127.0.0.1:%s for a local address)", s, port)
 	}
 	if _, err := net.LookupPort("tcp", port); err != nil {
 		return nil, fmt.Errorf("backend: parse tcp %q: invalid port %q", s, port)

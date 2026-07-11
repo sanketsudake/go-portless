@@ -11,24 +11,42 @@ import (
 // TransportOption customizes the http.Transport built by Transport/HTTPClient.
 type TransportOption func(*http.Transport)
 
-// initHTTP builds the shared transport/client exactly once. sync.Once makes
-// it safe against concurrent DefaultTransport/DefaultClient/Close calls.
+// initHTTP builds the shared transport/client on first use, under httpMu so
+// concurrent DefaultTransport/DefaultClient/Close calls are safe.
 func (r *Registry) initHTTP() {
-	r.httpOnce.Do(func() {
+	r.httpMu.Lock()
+	defer r.httpMu.Unlock()
+	if r.defaultTransport == nil {
 		r.defaultTransport = r.Transport()
 		r.defaultClient = &http.Client{Transport: r.WrapRoundTripper(r.defaultTransport)}
-	})
+	}
 }
 
-// HostRewrite reports the Host override for the route registered under name
-// (see RouteWithHostRewrite). The proxy package consults it through a small
-// optional interface, so a Registry-backed proxy applies rewrites too.
-func (r *Registry) HostRewrite(name string) (string, bool) {
+// HostRewrite maps a request's URL host ("name" or "name:port") to the Host
+// header it should carry, honoring the route's RouteWithHostRewrite and
+// preserving the port. ok is false when no rewrite applies. It is the single
+// seam behind the registry-built clients and the forward proxy (which
+// consults it through a small optional interface).
+func (r *Registry) HostRewrite(urlHost string) (string, bool) {
+	if !r.hasRewrites.Load() {
+		return "", false
+	}
+	name, port := urlHost, ""
+	if h, p, err := net.SplitHostPort(urlHost); err == nil {
+		name, port = h, p
+	}
 	rt, ok := r.Lookup(name)
 	if !ok {
 		return "", false
 	}
-	return rt.HostRewrite()
+	rewrite, ok := rt.HostRewrite()
+	if !ok {
+		return "", false
+	}
+	if port != "" {
+		rewrite = net.JoinHostPort(rewrite, port)
+	}
+	return rewrite, true
 }
 
 // WrapRoundTripper wraps next so requests to routes that declare a Host
@@ -45,16 +63,9 @@ type hostRewriteRT struct {
 }
 
 func (h *hostRewriteRT) RoundTrip(req *http.Request) (*http.Response, error) {
-	name, port := req.URL.Host, ""
-	if hp, p, err := net.SplitHostPort(req.URL.Host); err == nil {
-		name, port = hp, p
-	}
-	rewrite, ok := h.reg.HostRewrite(name)
+	rewrite, ok := h.reg.HostRewrite(req.URL.Host)
 	if !ok {
 		return h.next.RoundTrip(req)
-	}
-	if port != "" {
-		rewrite = net.JoinHostPort(rewrite, port)
 	}
 	// RoundTrippers must not mutate the caller's request.
 	out := req.Clone(req.Context())
