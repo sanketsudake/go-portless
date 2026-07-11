@@ -3,8 +3,10 @@ package portless_test
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"testing"
 
 	portless "github.com/sanketsudake/go-portless"
@@ -65,5 +67,57 @@ func TestHTTPClientAndTransport(t *testing.T) {
 	tr := r.Transport()
 	if tr.DialContext == nil {
 		t.Fatal("Transport must have DialContext set")
+	}
+}
+
+func TestDefaultClientSharesOnePool(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "pooled")
+	})}
+	go srv.Serve(l)
+	defer srv.Close()
+
+	r := portless.New()
+	defer r.Close()
+	if _, err := r.Add(context.Background(), "pool.test", backend.Listener(l)); err != nil {
+		t.Fatal(err)
+	}
+
+	c1, c2 := r.DefaultClient(), r.DefaultClient()
+	t1, t2 := r.DefaultTransport(), r.DefaultTransport()
+	if c1 != c2 || t1 != t2 {
+		t.Fatal("DefaultClient/DefaultTransport must return the same instance across calls")
+	}
+
+	var reused bool
+	trace := &httptrace.ClientTrace{
+		GotConn: func(info httptrace.GotConnInfo) { reused = info.Reused },
+	}
+
+	// Two requests through two separate DefaultClient() calls: the second
+	// must reuse the first's pooled connection.
+	for i := range 2 {
+		req, err := http.NewRequestWithContext(
+			httptrace.WithClientTrace(context.Background(), trace),
+			http.MethodGet, portless.URL("pool.test", 0, "/"), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := r.DefaultClient().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if i == 1 && !reused {
+			t.Fatal("second request did not reuse the pooled connection; DefaultClient is not sharing a transport")
+		}
 	}
 }

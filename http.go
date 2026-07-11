@@ -11,9 +11,37 @@ import (
 // TransportOption customizes the http.Transport built by Transport/HTTPClient.
 type TransportOption func(*http.Transport)
 
-// Transport returns an http.Transport that resolves route names via this
-// registry. IdleConnTimeout is kept short (30s) so pooled connections to
-// restarted backends age out quickly.
+// initHTTP builds the shared transport/client exactly once. sync.Once makes
+// it safe against concurrent DefaultTransport/DefaultClient/Close calls.
+func (r *Registry) initHTTP() {
+	r.httpOnce.Do(func() {
+		r.defaultTransport = r.Transport()
+		r.defaultClient = &http.Client{Transport: r.defaultTransport}
+	})
+}
+
+// DefaultTransport returns the registry's shared http.Transport, built once
+// and reused across calls so connections pool properly. Close drops its idle
+// connections. For a private transport with custom options, use Transport.
+func (r *Registry) DefaultTransport() *http.Transport {
+	r.initHTTP()
+	return r.defaultTransport
+}
+
+// DefaultClient returns the registry's shared http.Client over
+// DefaultTransport. Call it freely — helpers and retry loops share one
+// connection pool. Like HTTPClient it sets no Client.Timeout; use per-request
+// contexts.
+func (r *Registry) DefaultClient() *http.Client {
+	r.initHTTP()
+	return r.defaultClient
+}
+
+// Transport builds a NEW http.Transport that resolves route names via this
+// registry — each call owns a private connection pool, so prefer
+// DefaultTransport unless you need per-transport options. IdleConnTimeout is
+// kept short (30s) so pooled connections to restarted backends age out
+// quickly.
 func (r *Registry) Transport(opts ...TransportOption) *http.Transport {
 	t := &http.Transport{
 		DialContext:         r.DialContext,
@@ -26,7 +54,8 @@ func (r *Registry) Transport(opts ...TransportOption) *http.Transport {
 	return t
 }
 
-// HTTPClient returns an http.Client over Transport. It deliberately sets no
+// HTTPClient builds a NEW http.Client over a NEW Transport — prefer
+// DefaultClient for the shared pooled client. It deliberately sets no
 // Client.Timeout: readiness waits happen inside the dial and are bounded by
 // the route's ready timeout — use per-request contexts for request deadlines.
 func (r *Registry) HTTPClient(opts ...TransportOption) *http.Client {

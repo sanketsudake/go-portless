@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -28,6 +29,11 @@ type Registry struct {
 	// done is closed by Close; in-flight readiness waits observe it.
 	done      chan struct{}
 	closeOnce sync.Once
+
+	// Shared HTTP plumbing, built lazily by DefaultTransport/DefaultClient.
+	httpOnce         sync.Once
+	defaultTransport *http.Transport
+	defaultClient    *http.Client
 }
 
 // New creates a Registry.
@@ -164,6 +170,11 @@ func (r *Registry) Close() error {
 		r.routes = make(map[string]*Route)
 		r.mu.Unlock()
 		close(r.done)
+
+		// Drop the shared pool's idle conns (initHTTP is race-safe and cheap
+		// if nothing was ever built: an unused Transport owns no goroutines).
+		r.initHTTP()
+		r.defaultTransport.CloseIdleConnections()
 
 		for _, rt := range routes {
 			if rt == nil {
