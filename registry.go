@@ -158,7 +158,9 @@ func (r *Registry) AddReady(ctx context.Context, name string, b Backend, opts ..
 		// a blocking Stopper cannot wedge AddReady forever.
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), addReadyCleanupTimeout)
 		defer cancel()
-		if rerr := r.Remove(cleanupCtx, name); rerr != nil {
+		// A concurrent Remove/Close already freeing the name is the goal,
+		// not a cleanup failure — don't warn about it.
+		if rerr := r.Remove(cleanupCtx, name); rerr != nil && !errors.Is(rerr, ErrRouteNotFound) {
 			r.cfg.logger.Warn("portless: add ready: cleanup remove failed",
 				"route", name, "err", rerr)
 		}
