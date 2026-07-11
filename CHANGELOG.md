@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.2.0 (unreleased)
+## v0.2.0 — 2026-07-11
 
 Adoption-feedback release: every change below was surfaced by the first real adoption of v0.1.0 in an OSS project's test harnesses and CI.
 
