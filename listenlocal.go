@@ -166,26 +166,31 @@ func (r *Registry) bridgeConn(conn net.Conn, name string) {
 		fail(fmt.Errorf("portless: bridge %q: %w", name, err))
 		return
 	}
-	upstream, err := r.dialRoute(context.Background(), rt, "tcp",
+
+	// Tear the pipe down when the registry closes: cancel an in-flight dial
+	// and close the client conn, which unwinds both copies; the deferred
+	// upstream Close finishes the job. Armed before the dial so Close never
+	// waits out a readiness loop.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		select {
+		case <-r.done:
+			cancel()
+			_ = conn.Close()
+		case <-stop:
+		}
+	}()
+
+	upstream, err := r.dialRoute(ctx, rt, "tcp",
 		net.JoinHostPort(rt.name, strconv.Itoa(port)))
 	if err != nil {
 		warn(err) // dialRoute already emitted EventDialError
 		return
 	}
 	defer func() { _ = upstream.Close() }()
-
-	// Tear the pipe down when the registry closes, so bridged connections
-	// do not outlive Close.
-	stop := make(chan struct{})
-	defer close(stop)
-	go func() {
-		select {
-		case <-r.done:
-			_ = conn.Close()
-			_ = upstream.Close()
-		case <-stop:
-		}
-	}()
 
 	done := make(chan struct{})
 	go func() {

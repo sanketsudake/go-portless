@@ -19,7 +19,9 @@ import (
 //
 // The reservation binds the wildcard address deliberately: a port reserved
 // on all interfaces is guaranteed free for a component that later binds any
-// specific one. The listeners never accept and close before returning.
+// specific one. IPv4 is preferred (an IPv6-only wildcard would not reserve
+// the port for later IPv4 binds), falling back to IPv6 on v6-only hosts.
+// The listeners never accept and close before returning.
 func ReservePorts(n int) ([]int, error) {
 	if n <= 0 {
 		return nil, fmt.Errorf("backend: reserve ports: n must be positive, got %d", n)
@@ -32,7 +34,10 @@ func ReservePorts(n int) ([]int, error) {
 	}()
 	ports := make([]int, 0, n)
 	for range n {
-		l, err := net.Listen("tcp", ":0")
+		l, err := net.Listen("tcp4", ":0")
+		if err != nil {
+			l, err = net.Listen("tcp", ":0")
+		}
 		if err != nil {
 			return nil, fmt.Errorf("backend: reserve ports: %w", err)
 		}
