@@ -85,7 +85,10 @@ func (r *resolver) resolveService(ctx context.Context) (target, error) {
 		}
 		tp = svc.Spec.Ports[0].TargetPort
 		// Kubernetes semantics: an unset targetPort defaults to the port.
-		if tp.Type == intstr.Int && tp.IntValue() == 0 {
+		// Both the zero-Int and empty-String forms mean unset (objects not
+		// run through API-server defaulting can carry either).
+		if (tp.Type == intstr.Int && tp.IntValue() == 0) ||
+			(tp.Type == intstr.String && tp.StrVal == "") {
 			tp = intstr.FromInt32(svc.Spec.Ports[0].Port)
 		}
 	}
@@ -146,7 +149,7 @@ func containerPort(pod *corev1.Pod, tp intstr.IntOrString, infer bool) (int, err
 		return tp.IntValue(), nil
 	}
 	name := tp.StrVal
-	for _, c := range pod.Spec.Containers {
+	for _, c := range servingContainers(pod) {
 		for _, p := range c.Ports {
 			if p.Name == name {
 				return int(p.ContainerPort), nil
@@ -158,9 +161,13 @@ func containerPort(pod *corev1.Pod, tp intstr.IntOrString, infer bool) (int, err
 
 // inferredContainerPort applies the single-port rule to a pod's declared
 // container ports, for Pod/LabelSelector targets with no TargetPort option.
+// Declared ports are informational in Kubernetes, so inference can only be
+// as right as the pod spec: a pod whose only declared port belongs to a
+// sidecar infers the sidecar's port — set TargetPort explicitly for such
+// pods (see the TargetPort doc).
 func inferredContainerPort(pod *corev1.Pod) (int, error) {
 	var ports []int32
-	for _, c := range pod.Spec.Containers {
+	for _, c := range servingContainers(pod) {
 		for _, p := range c.Ports {
 			ports = append(ports, p.ContainerPort)
 		}
@@ -169,4 +176,17 @@ func inferredContainerPort(pod *corev1.Pod) (int, error) {
 		return int(ports[0]), nil
 	}
 	return 0, fmt.Errorf("pod %q declares %d container ports; specify TargetPort", pod.Name, len(ports))
+}
+
+// servingContainers returns the containers that can serve traffic: regular
+// containers plus native sidecars (restartable init containers, K8s 1.28+),
+// which regular-container-only scans would miss.
+func servingContainers(pod *corev1.Pod) []corev1.Container {
+	cs := make([]corev1.Container, 0, len(pod.Spec.Containers)+len(pod.Spec.InitContainers))
+	for _, c := range pod.Spec.InitContainers {
+		if c.RestartPolicy != nil && *c.RestartPolicy == corev1.ContainerRestartPolicyAlways {
+			cs = append(cs, c)
+		}
+	}
+	return append(cs, pod.Spec.Containers...)
 }

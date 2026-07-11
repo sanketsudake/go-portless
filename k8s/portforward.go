@@ -55,8 +55,11 @@ func Pod(namespace, name string) Option {
 // TargetPort sets the pod container port to forward to. It may be a number
 // or a named port ("http"). Optional in all modes when a single port can be
 // inferred: Service uses its one declared port; Pod/LabelSelector use the
-// resolved pod's one declared container port. Required when the target
-// declares zero or several ports.
+// resolved pod's one declared container port (native sidecars included).
+// Required when the target declares zero or several ports. Container port
+// declarations are informational in Kubernetes — for pods whose sidecar
+// declares a port (e.g. an injected proxy's metrics port), set TargetPort
+// explicitly rather than relying on inference.
 func TargetPort(p intstr.IntOrString) Option {
 	return func(o *options) { o.targetPort, o.hasTarget = p, true }
 }

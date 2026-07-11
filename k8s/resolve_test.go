@@ -202,3 +202,49 @@ func TestResolveServiceUnsetTargetPortDefaultsToPort(t *testing.T) {
 		t.Fatalf("containerPort = %d, want 8080 (service Port)", tgt.containerPort)
 	}
 }
+
+func TestResolveInfersNativeSidecarPort(t *testing.T) {
+	labels := map[string]string{"app": "web"}
+	pod := readyPod("web-0", "default", labels) // main container: no ports
+	always := corev1.ContainerRestartPolicyAlways
+	pod.Spec.InitContainers = []corev1.Container{{
+		Name:          "sidecar",
+		RestartPolicy: &always,
+		Ports:         []corev1.ContainerPort{{ContainerPort: 7070}},
+	}}
+	client := fake.NewSimpleClientset(pod)
+	r := &resolver{client: client, opts: options{namespace: "default", selector: "app=web"}}
+
+	tgt, err := r.resolve(context.Background())
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if tgt.containerPort != 7070 {
+		t.Fatalf("containerPort = %d, want 7070 (native sidecar)", tgt.containerPort)
+	}
+}
+
+func TestResolveServiceEmptyStringTargetPortDefaultsToPort(t *testing.T) {
+	labels := map[string]string{"app": "web"}
+	client := fake.NewSimpleClientset(
+		&corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: "default"},
+			Spec: corev1.ServiceSpec{
+				Selector: labels,
+				// The string-empty unset form (objects not run through
+				// API-server defaulting): must also default to Port.
+				Ports: []corev1.ServicePort{{Port: 8080, TargetPort: intstr.FromString("")}},
+			},
+		},
+		readyPod("web-0", "default", labels, corev1.ContainerPort{ContainerPort: 8080}),
+	)
+	r := &resolver{client: client, opts: options{namespace: "default", service: "web"}}
+
+	tgt, err := r.resolve(context.Background())
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if tgt.containerPort != 8080 {
+		t.Fatalf("containerPort = %d, want 8080 (service Port)", tgt.containerPort)
+	}
+}

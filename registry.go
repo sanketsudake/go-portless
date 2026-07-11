@@ -150,12 +150,23 @@ func (r *Registry) AddReady(ctx context.Context, name string, b Backend, opts ..
 		return nil, err
 	}
 	if err := rt.Ready(ctx); err != nil {
-		// ctx may already be expired; cleanup must still run.
-		_ = r.Remove(context.WithoutCancel(ctx), name)
-		return nil, fmt.Errorf("portless: add ready %q: %w", name, err)
+		// ctx may already be expired; cleanup must still run, but bounded so
+		// a blocking Stopper cannot wedge AddReady forever.
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), addReadyCleanupTimeout)
+		defer cancel()
+		if rerr := r.Remove(cleanupCtx, name); rerr != nil {
+			r.cfg.logger.Warn("portless: add ready: cleanup remove failed",
+				"route", name, "err", rerr)
+		}
+		// Ready errors already name the route and carry the portless prefix.
+		return nil, err
 	}
 	return rt, nil
 }
+
+// addReadyCleanupTimeout bounds the backend Stop that AddReady runs after a
+// failed readiness wait.
+const addReadyCleanupTimeout = 10 * time.Second
 
 // Remove unregisters name. If the backend implements Stopper, Stop is called
 // with ctx.

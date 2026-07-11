@@ -202,3 +202,21 @@ func TestListenLocalClosedByRegistryClose(t *testing.T) {
 		t.Fatal("bridge listener should be closed after registry Close")
 	}
 }
+
+func TestListenLocalRejectsMultiPortMap(t *testing.T) {
+	t.Parallel()
+	upstream := startEchoOnce(t)
+	reg := portless.New()
+	defer reg.Close()
+	_, err := reg.Add(t.Context(), "svc", backend.Listener(upstream),
+		portless.RouteWithPortMap(map[int]int{80: 8080, 443: 8443}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A bridge exposes one local address; a multi-entry port map is
+	// ambiguous and must be rejected up front, not resolved per connection
+	// by random map iteration.
+	if _, err := reg.ListenLocal("svc"); err == nil {
+		t.Fatal("ListenLocal should reject a multi-entry port map")
+	}
+}
