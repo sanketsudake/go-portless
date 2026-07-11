@@ -9,3 +9,6 @@ cmd/portless/portless
 
 # local-only fission migration notes (not part of the repo)
 docs/fission-adoption.md
+
+# internal session planning artifacts
+docs/superpowers/

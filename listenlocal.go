@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/sanketsudake/go-portless/internal/backoff"
 )
 
 // ListenLocal binds a kernel-assigned loopback listener and bridges every
@@ -111,7 +113,7 @@ func (s *bridgeSet) closeAll() {
 // leaving a bound listener nobody accepts on.
 func (r *Registry) bridgeAccept(l net.Listener, name string) {
 	defer r.bridges.remove(l)
-	delay := 5 * time.Millisecond
+	bo := backoff.New(5*time.Millisecond, time.Second)
 	for {
 		conn, err := l.Accept()
 		if err != nil {
@@ -120,19 +122,16 @@ func (r *Registry) bridgeAccept(l net.Listener, name string) {
 			}
 			r.cfg.logger.Warn("portless: local bridge accept failed, retrying",
 				"route", name, "err", err)
-			timer := time.NewTimer(delay)
+			timer := time.NewTimer(bo.Next())
 			select {
 			case <-r.done:
 				timer.Stop()
 				return
 			case <-timer.C:
 			}
-			if delay *= 2; delay > time.Second {
-				delay = time.Second
-			}
 			continue
 		}
-		delay = 5 * time.Millisecond
+		bo.Reset()
 		go r.bridgeConn(conn, name)
 	}
 }

@@ -92,6 +92,8 @@ func (r *resolver) resolveService(ctx context.Context) (target, error) {
 			tp = intstr.FromInt32(svc.Spec.Ports[0].Port)
 		}
 	}
+	// infer=false: the Service path resolved tp above; pod-port inference
+	// must never kick in for Services.
 	return r.resolveSelector(ctx, metav1.FormatLabelSelector(&metav1.LabelSelector{MatchLabels: svc.Spec.Selector}), tp, false)
 }
 

@@ -1,4 +1,7 @@
-// Package backend provides built-in portless backends.
+// Package backend provides built-in portless backends, plus the small
+// port-plumbing helpers that pair with them: ListenAndAdd (bind a loopback
+// listener and register it in one call) and ReservePorts (distinct free
+// ports for components that take port ints).
 package backend
 
 import (
