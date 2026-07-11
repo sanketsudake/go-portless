@@ -23,18 +23,7 @@ func echoListener(t *testing.T) net.Listener {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { l.Close() })
-	go func() {
-		for {
-			c, err := l.Accept()
-			if err != nil {
-				return
-			}
-			go func(c net.Conn) {
-				defer c.Close()
-				io.Copy(c, c)
-			}(c)
-		}
-	}()
+	go acceptEcho(l)
 	return l
 }
 

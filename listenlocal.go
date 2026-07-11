@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -44,49 +45,72 @@ func (r *Registry) ListenLocal(name string) (net.Listener, error) {
 	if !ok {
 		return nil, fmt.Errorf("portless: listen local %q: %w", name, ErrRouteNotFound)
 	}
-	if _, err := bridgeDialPort(rt); err != nil {
+	if _, err := rt.bridgeDialPort(); err != nil {
 		return nil, fmt.Errorf("portless: listen local %q: %w", name, err)
 	}
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("portless: listen local %q: %w", name, err)
 	}
-
-	r.mu.Lock()
-	if r.closed {
-		r.mu.Unlock()
+	if !r.bridges.add(l) {
 		_ = l.Close()
 		return nil, ErrClosed
 	}
-	r.bridges = append(r.bridges, l)
-	r.mu.Unlock()
-
 	go r.bridgeAccept(l, name)
 	return l, nil
 }
 
-// bridgeDialPort picks the requested port a bridge dials for rt: 0 when the
-// route has no port map, the single mapped port when it has one entry, and
-// an error when the map is ambiguous.
-func bridgeDialPort(rt *Route) (int, error) {
-	switch len(rt.cfg.portMap) {
-	case 0:
-		return 0, nil
-	case 1:
-		for p := range rt.cfg.portMap {
-			return p, nil
+// closeWriter is the half-close capability of TCP conns and SPDY streams.
+type closeWriter interface{ CloseWrite() error }
+
+// bridgeSet tracks a registry's ListenLocal listeners under its own lock, so
+// bridge lifecycle never contends with the route map's mutex.
+type bridgeSet struct {
+	mu     sync.Mutex
+	ls     []net.Listener
+	closed bool
+}
+
+// add registers l; it reports false once closeAll has run.
+func (s *bridgeSet) add(l net.Listener) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return false
+	}
+	s.ls = append(s.ls, l)
+	return true
+}
+
+// remove drops l, so early-closed bridges do not accumulate on
+// never-Closed registries.
+func (s *bridgeSet) remove(l net.Listener) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, b := range s.ls {
+		if b == l {
+			s.ls = append(s.ls[:i], s.ls[i+1:]...)
+			return
 		}
 	}
-	return 0, fmt.Errorf("route has %d mapped ports; bridge one route per port", len(rt.cfg.portMap))
+}
+
+// closeAll closes every tracked listener and rejects future adds.
+func (s *bridgeSet) closeAll() {
+	s.mu.Lock()
+	ls := s.ls
+	s.ls, s.closed = nil, true
+	s.mu.Unlock()
+	for _, l := range ls {
+		_ = l.Close()
+	}
 }
 
 // bridgeAccept runs the accept loop. Transient Accept errors (e.g. fd
 // exhaustion) are retried with backoff, like net/http.Server, instead of
-// leaving a bound listener nobody accepts on. On exit the listener is
-// dropped from the registry's bridge list so early-closed bridges do not
-// accumulate on never-Closed registries.
+// leaving a bound listener nobody accepts on.
 func (r *Registry) bridgeAccept(l net.Listener, name string) {
-	defer r.removeBridge(l)
+	defer r.bridges.remove(l)
 	delay := 5 * time.Millisecond
 	for {
 		conn, err := l.Accept()
@@ -113,33 +137,25 @@ func (r *Registry) bridgeAccept(l net.Listener, name string) {
 	}
 }
 
-// removeBridge drops l from the registry's bridge list.
-func (r *Registry) removeBridge(l net.Listener) {
-	r.mu.Lock()
-	for i, b := range r.bridges {
-		if b == l {
-			r.bridges = append(r.bridges[:i], r.bridges[i+1:]...)
-			break
-		}
-	}
-	r.mu.Unlock()
-}
-
 // bridgeConn pipes one accepted local connection to a fresh route dial,
 // resolving name at connection time so Remove/re-Add are honored.
 func (r *Registry) bridgeConn(conn net.Conn, name string) {
 	defer conn.Close()
 
+	// A dead backend must not surface as a silent connection reset.
+	warn := func(err error) {
+		r.cfg.logger.Warn("portless: local bridge dial failed", "route", name, "err", err)
+	}
 	fail := func(err error) {
 		r.emit(Event{Type: EventDialError, Route: name, Err: err})
-		r.cfg.logger.Warn("portless: local bridge dial failed", "route", name, "err", err)
+		warn(err)
 	}
 	rt, ok := r.Lookup(name)
 	if !ok {
 		fail(fmt.Errorf("portless: bridge %q: %w", name, ErrRouteNotFound))
 		return
 	}
-	port, err := bridgeDialPort(rt)
+	port, err := rt.bridgeDialPort()
 	if err != nil {
 		fail(fmt.Errorf("portless: bridge %q: %w", name, err))
 		return
@@ -147,10 +163,7 @@ func (r *Registry) bridgeConn(conn net.Conn, name string) {
 	upstream, err := r.dialRoute(context.Background(), rt, "tcp",
 		net.JoinHostPort(rt.name, strconv.Itoa(port)))
 	if err != nil {
-		// dialRoute already emitted EventDialError; a dead backend must not
-		// surface as a silent connection reset, so also log loudly.
-		r.cfg.logger.Warn("portless: local bridge dial failed",
-			"route", rt.name, "err", err)
+		warn(err) // dialRoute already emitted EventDialError
 		return
 	}
 	defer upstream.Close()
@@ -177,24 +190,19 @@ func (r *Registry) bridgeConn(conn net.Conn, name string) {
 		// upstream stays open: a full close here would truncate an in-flight
 		// response. Servers that need the request EOF to respond then wait
 		// until the client closes.
-		if cw, ok := upstream.(interface{ CloseWrite() error }); ok {
+		if cw, ok := upstream.(closeWriter); ok {
 			_ = cw.CloseWrite()
 		}
 	}()
 	_, _ = io.Copy(conn, upstream)
 	// Tell the client the response stream ended; without this a
-	// connection-close-delimited response hangs the consumer forever.
-	closeWrite(conn)
-	<-done
-}
-
-// closeWrite half-closes the write side when the conn supports it, else
-// fully closes. Used on the client side of a bridge, which is always a
-// *net.TCPConn in practice.
-func closeWrite(c net.Conn) {
-	if cw, ok := c.(interface{ CloseWrite() error }); ok {
+	// connection-close-delimited response hangs the consumer forever. The
+	// client side is our own *net.TCPConn, so CloseWrite is always there;
+	// the full-close fallback only guards exotic wrappers.
+	if cw, ok := conn.(closeWriter); ok {
 		_ = cw.CloseWrite()
-		return
+	} else {
+		_ = conn.Close()
 	}
-	_ = c.Close()
+	<-done
 }

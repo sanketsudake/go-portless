@@ -17,6 +17,10 @@ import (
 
 const defaultReadyTimeout = 60 * time.Second
 
+// addReadyCleanupTimeout bounds the backend Stop that AddReady runs after a
+// failed readiness wait.
+const addReadyCleanupTimeout = 10 * time.Second
+
 // Registry maps names to backends and implements ContextDialer: dialing
 // "name:port" resolves through the named route, blocking until the backend
 // is ready (bounded by ctx and the route's ready timeout).
@@ -28,7 +32,7 @@ type Registry struct {
 	closed bool
 
 	// bridges are ListenLocal listeners, closed by Close.
-	bridges []net.Listener
+	bridges bridgeSet
 
 	// done is closed by Close; in-flight readiness waits observe it.
 	done      chan struct{}
@@ -164,10 +168,6 @@ func (r *Registry) AddReady(ctx context.Context, name string, b Backend, opts ..
 	return rt, nil
 }
 
-// addReadyCleanupTimeout bounds the backend Stop that AddReady runs after a
-// failed readiness wait.
-const addReadyCleanupTimeout = 10 * time.Second
-
 // Remove unregisters name. If the backend implements Stopper, Stop is called
 // with ctx.
 func (r *Registry) Remove(ctx context.Context, name string) error {
@@ -249,14 +249,9 @@ func (r *Registry) Close() error {
 		r.closed = true
 		routes := r.routes
 		r.routes = make(map[string]*Route)
-		bridges := r.bridges
-		r.bridges = nil
 		r.mu.Unlock()
 		close(r.done)
-
-		for _, l := range bridges {
-			_ = l.Close()
-		}
+		r.bridges.closeAll()
 
 		// Drop the shared pool's idle conns, if the pool was ever built.
 		r.httpMu.Lock()
