@@ -19,6 +19,8 @@ Inspired by [portless.sh](https://portless.sh), rebuilt for test infrastructure:
 Run a process on an assigned port and reach it by name — no port picked:
 
 ```sh
+brew install --cask sanketsudake/tap/portless
+# or:
 go install github.com/sanketsudake/go-portless/cmd/portless@latest
 
 portless run web -- go run ./cmd/server   # binds $PORT, names it "web"

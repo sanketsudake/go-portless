@@ -1,0 +1,36 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"] # project semver tags; k8s/v* and cmd/portless/v* don't match
+
+permissions:
+  contents: write # create the GitHub release + upload archives
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # goreleaser needs full history for the changelog
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: cmd/portless/go.mod # build the CLI module
+          cache: true
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Pin goreleaser to the exact tag that triggered this run. The release
+          # commit also carries k8s/v* and cmd/portless/v* tags, so `git describe`
+          # would otherwise be ambiguous.
+          GORELEASER_CURRENT_TAG: ${{ github.ref_name }}
+          # Homebrew cask push to sanketsudake/homebrew-tap. Reuse the same
+          # fine-grained PAT (Contents: read/write on that tap repo) saved as
+          # this secret. Without it, add `--skip=homebrew` to args above.
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}

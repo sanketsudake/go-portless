@@ -1,0 +1,73 @@
+# goreleaser build/release config for the portless CLI.
+# Validate with `goreleaser check`.
+#
+# The CLI lives in its own module (github.com/sanketsudake/go-portless/cmd/portless),
+# so the build below sets `dir: cmd/portless`. Releases are cut from the project's
+# semver `vX.Y.Z` tags: the release workflow triggers on `v*`, builds the portless
+# CLI, attaches its binaries to the GitHub release, and pushes the Homebrew cask.
+# (GoReleaser's Pro-only `monorepo`/tag-prefix mode is deliberately not used.)
+version: 2
+
+project_name: portless
+
+builds:
+  - id: portless
+    dir: cmd/portless
+    main: .
+    binary: portless
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: default
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    formats:
+      - tar.gz
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+
+# Homebrew tap (macOS cask for the prebuilt binary). Requires the
+# `sanketsudake/homebrew-tap` repo and a HOMEBREW_TAP_GITHUB_TOKEN secret (a
+# fine-grained PAT scoped to that tap repo with Contents: read/write) so
+# goreleaser can push the generated cask there during a release. Linux users
+# install via the tarball or `go install`.
+homebrew_casks:
+  - name: portless
+    repository:
+      owner: sanketsudake
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Casks
+    homepage: "https://github.com/sanketsudake/go-portless"
+    description: "Dial services by name with readiness built into the dial — the portless CLI"
+    hooks:
+      post:
+        install: |
+          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/portless"]
+          end
