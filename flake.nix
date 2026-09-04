@@ -28,7 +28,7 @@
           # The CLI is its own module under cmd/portless, as the goreleaser
           # build's `dir: cmd/portless` says.
           modRoot = "cmd/portless";
-          vendorHash = "sha256-GlMFTbKoJphr+l31jn8Qo5krceY0ZCnkj6OAs26SHMo=";
+          vendorHash = "sha256-njbGgsjFhY3D5rgIbaRQkPQ6+iqIYhIhv9ht67bOg10=";
 
           # Matches the goreleaser build: pure Go, no cgo.
           env.CGO_ENABLED = 0;
