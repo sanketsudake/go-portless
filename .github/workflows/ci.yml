@@ -91,3 +91,19 @@ jobs:
       - name: Run e2e (pod-delete self-heal)
         working-directory: k8s
         run: go test -tags kinde2e -timeout 10m -run TestE2E ./...
+
+  # The flake is how this CLI reaches nix users (sanketsudake/dotfiles installs
+  # it that way), and its vendorHash goes stale whenever go.sum moves. Building
+  # it here makes the PR that moves go.sum go red, instead of the break landing
+  # on a machine downstream.
+  nix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: "experimental-features = nix-command flakes"
+      - name: Build the flake package
+        run: nix build .#portless --print-build-logs
+      - name: Smoke-test the built binary
+        run: ./result/bin/portless --version
