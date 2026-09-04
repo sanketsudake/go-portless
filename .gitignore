@@ -13,3 +13,6 @@ docs/fission-adoption.md
 
 # internal session planning artifacts
 docs/superpowers/
+
+# nix build output
+/result
